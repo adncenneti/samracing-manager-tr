@@ -1,0 +1,19 @@
+
+{
+  "reservations": [],
+  "blacklist": [],
+  "simulator_groups": [
+    {
+      "id": "LOGITECH",
+      "name": "Logitech G29",
+      "seatCount": 8,
+      "order": 0
+    },
+    {
+      "id": "MOZA",
+      "name": "Moza R5",
+      "seatCount": 8,
+      "order": 1
+    }
+  ]
+}

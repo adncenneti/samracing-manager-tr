@@ -1,0 +1,5 @@
+{
+  "name": "SimRacing Manager",
+  "description": "A dark-themed reservation management system for racing simulators (Logitech G29 & Moza R5) featuring drag-and-drop scheduling, group bookings, and status tracking.",
+  "requestFramePermissions": []
+}
