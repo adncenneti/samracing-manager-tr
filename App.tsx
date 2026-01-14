@@ -68,13 +68,11 @@ export default function App() {
 
   // Auth Listener
   useEffect(() => {
-    // FIX: Using supabase.auth.getSession() which is the correct property path
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setAuthLoading(false);
     });
 
-    // FIX: Using supabase.auth.onAuthStateChange()
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
     });
@@ -123,26 +121,18 @@ export default function App() {
     } catch (error) {
       console.error("Data fetch error:", error);
     }
-  }, [session, mapReservation, mapBlacklist, simulatorGroups.length]);
+  }, [session, mapReservation, mapBlacklist]);
 
   // Realtime Subscriptions
   useEffect(() => {
     if (!session) return;
-    
     fetchData();
-
     const resChannel = supabase.channel('realtime-reservations')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'reservations' }, () => {
-          fetchData();
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reservations' }, () => fetchData())
       .subscribe();
-
     const blChannel = supabase.channel('realtime-blacklist')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'blacklist' }, () => {
-          fetchData();
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'blacklist' }, () => fetchData())
       .subscribe();
-
     return () => {
       supabase.removeChannel(resChannel);
       supabase.removeChannel(blChannel);
@@ -160,12 +150,12 @@ export default function App() {
     };
   }, []);
 
-  // Update logic for current time indicator
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(interval);
   }, []);
 
+  // Form Sync Logic - Refined to prevent clearing when adding seats to group
   useEffect(() => {
     if (selectedIds.length === 0) {
       setEditForm({ name: '', phone: '', startTime: '', endTime: '', isPaid: false, seatId: '' });
@@ -177,24 +167,36 @@ export default function App() {
     if (selectedIds.length > 1) {
         setIsGroupMode(true);
     } else if (selectedIds.length === 1 && !activeEditingIds.includes(selectedIds[0])) {
+        // Only disable group mode if we selected a completely new single item
         setIsGroupMode(false);
     }
     
-    if (JSON.stringify(selectedIds) !== JSON.stringify(activeEditingIds)) {
-      const firstRes = reservations.find(r => r.id === selectedIds[0]);
-      if (firstRes) {
-        const isSameName = selectedIds.every(id => reservations.find(r => r.id === id)?.name === firstRes.name);
-        const isSamePhone = selectedIds.every(id => reservations.find(r => r.id === id)?.phone === firstRes.phone);
-        const isSamePaid = selectedIds.every(id => reservations.find(r => r.id === id)?.isPaid === firstRes.isPaid);
+    // Check if the actual selection changed (different number of items or different items)
+    const selectionChanged = JSON.stringify(selectedIds.sort()) !== JSON.stringify(activeEditingIds.sort());
+    
+    if (selectionChanged) {
+      const selectedReservations = reservations.filter(r => selectedIds.includes(r.id));
+      if (selectedReservations.length > 0) {
+        const firstRes = selectedReservations[0];
+        
+        // If we are already editing and just added/removed an ID, don't overwrite if form has data
+        // Unless it's a brand new selection
+        const isActuallyNewSelection = selectedIds.length === 1 && !activeEditingIds.includes(selectedIds[0]);
+        
+        if (isActuallyNewSelection || activeEditingIds.length === 0) {
+          const isSameName = selectedReservations.every(r => r.name === firstRes.name);
+          const isSamePhone = selectedReservations.every(r => r.phone === firstRes.phone);
+          const isSamePaid = selectedReservations.every(r => r.isPaid === firstRes.isPaid);
 
-        setEditForm({ 
-          name: isSameName ? firstRes.name : '', 
-          phone: isSamePhone ? firstRes.phone : '', 
-          startTime: firstRes.startTime, 
-          endTime: firstRes.endTime, 
-          isPaid: isSamePaid ? firstRes.isPaid : false, 
-          seatId: selectedIds.length === 1 ? firstRes.seatId : '' 
-        });
+          setEditForm({ 
+            name: isSameName ? firstRes.name : '', 
+            phone: isSamePhone ? firstRes.phone : '', 
+            startTime: firstRes.startTime, 
+            endTime: firstRes.endTime, 
+            isPaid: isSamePaid ? firstRes.isPaid : false, 
+            seatId: selectedIds.length === 1 ? firstRes.seatId : '' 
+          });
+        }
         setActiveEditingIds([...selectedIds]);
       }
     }
@@ -245,7 +247,6 @@ export default function App() {
     const currentDragTarget = dragTarget;
     setDraggedResId(null);
     setDragTarget(null);
-
     if (currentDragTarget?.isValid && currentDraggedId) {
       try {
         await supabase.from('reservations').update({
@@ -259,6 +260,10 @@ export default function App() {
 
   const handleSaveEdit = async () => {
     if (selectedIds.length === 0) return;
+    if (!editForm.name || !editForm.phone) {
+        alert("Lütfen isim ve telefon bilgilerini doldurun.");
+        return;
+    }
     try {
       await Promise.all(selectedIds.map(id => {
         const payload: any = {
@@ -298,7 +303,8 @@ export default function App() {
             alert("Bu masa dolu!"); return;
         }
         try {
-            const { data } = await supabase.from('reservations').insert({
+            // Use values from editForm to ensure consistency when adding new seat to group
+            const { data, error } = await supabase.from('reservations').insert({
                 group_id: refRes.groupId,
                 seat_id: targetSeatId,
                 name: editForm.name || refRes.name,
@@ -310,8 +316,10 @@ export default function App() {
                 date: dateStr,
                 user_id: session.user.id
             }).select();
-            if(data) setSelectedIds(prev => [...prev, data[0].id]);
-        } catch(e) { console.error(e); }
+            
+            if (error) throw error;
+            if (data) setSelectedIds(prev => [...prev, data[0].id]);
+        } catch(e) { console.error("Grup ekleme hatası:", e); }
     }
   };
 
@@ -352,14 +360,11 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    // FIX: Using supabase.auth.signOut()
     await supabase.auth.signOut();
   };
 
   if (authLoading) return <div className="fixed inset-0 bg-sim-black flex items-center justify-center text-sim-yellow"><Loader2 className="animate-spin" size={48}/></div>;
-
   if (!session) return <LoginScreen />;
-
   if (showScreensaver) return <div className="fixed inset-0 z-[9999] bg-black flex items-center justify-center" onMouseMove={resetIdleTimer}><video src="/screensaver.mp4" autoPlay loop muted className="w-full h-full object-cover" /></div>;
 
   return (
@@ -394,7 +399,6 @@ export default function App() {
                         <button key={group.id} onClick={(e) => {e.stopPropagation(); setView(group.id)}} className={`px-4 py-1.5 rounded-md font-bold text-[10px] uppercase transition-all whitespace-nowrap ${view === group.id ? 'bg-sim-yellow text-black' : 'text-gray-500 hover:text-gray-300'}`}>{group.name}</button>
                     ))}
                 </div>
-
                 <button onClick={(e) => {e.stopPropagation(); setIsModalOpen(true)}} className="bg-sim-yellow text-black px-5 py-2 rounded-lg font-black text-[11px] uppercase shadow-lg shadow-yellow-500/10 hover:brightness-110 flex items-center gap-2"><Plus size={14}/> Yeni</button>
             </div>
           </header>
@@ -424,12 +428,10 @@ export default function App() {
                             <div className="h-[40px] border-b border-sim-yellow bg-sim-black/80 sticky top-0 z-[60] flex items-center justify-center font-bold text-sim-yellow text-[10px] tracking-widest uppercase backdrop-blur-md">{seat.label}</div>
                             <div className="relative flex-1 w-full" onDragOver={(e) => handleDragOver(e, seat.id)} onDrop={(e) => handleDrop(e, seat.id)}>
                                 <div className="absolute inset-0 z-10 cursor-default" onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); const y = e.clientY - e.currentTarget.getBoundingClientRect().top; const t = minutesToTime(Math.floor(((START_HOUR * 60) + (y / HOUR_HEIGHT * 60)) / 30) * 30); setContextMenu({ visible: true, x: e.pageX, y: e.pageY, seatId: seat.id, time: t }); }} />
-                                
                                 {reservations.filter(r => r.seatId === seat.id && r.date === dateStr).map(res => {
                                     const pos = getGridPosition(res.startTime, res.endTime, START_HOUR, endHour);
                                     const selected = selectedIds.includes(res.id);
                                     const status = now.getHours() * 60 + now.getMinutes() > timeToMinutes(res.endTime) && isSameDay(currentDate, now) ? 'PAST' : 'FUTURE';
-                                    
                                     return (
                                         <div 
                                           key={res.id} draggable={!isCtrlPressed} onDragStart={(e) => handleDragStart(e, res.id)} onClick={(e) => handleSelection(e, res.id)} 
@@ -519,17 +521,14 @@ function LoginScreen() {
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
-
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
         setError('');
-        // FIX: Using supabase.auth.signInWithPassword()
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) setError('Giriş başarısız. Bilgilerinizi kontrol edin.');
         setLoading(false);
     };
-
     return (
         <div className="fixed inset-0 bg-sim-black flex items-center justify-center p-4">
             <div className="w-full max-w-[400px] bg-sim-dark border border-sim-yellow/30 p-10 rounded-2xl shadow-2xl relative overflow-hidden transition-all">
