@@ -6,7 +6,8 @@ import {
   Calendar, ChevronLeft, ChevronRight, Plus, Trash, Save, Edit3, 
   MousePointer2, FileSpreadsheet, AlertOctagon, Clock, Coins, Ban, 
   Users, Image as ImageIcon, MousePointerSquareDashed, Settings, 
-  Minus, Repeat, CheckCircle2, UserPlus, LogOut, Lock, Mail, Loader2 
+  Minus, Repeat, CheckCircle2, UserPlus, LogOut, Lock, Mail, Loader2,
+  Check
 } from 'lucide-react';
 import { Reservation, SimulatorType, Seat, ContextMenuState, BlacklistEntry, SimulatorGroup } from './types';
 import { generateSeats, checkOverlap, getGridPosition, START_HOUR, DEFAULT_END_HOUR, timeToMinutes, minutesToTime, formatPhoneNumber } from './utils';
@@ -51,9 +52,7 @@ export default function App() {
   
   const [infoData, setInfoData] = useState<any>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ visible: false, x: 0, y: 0 });
-  const [alertData, setAlertData] = useState<{isOpen: boolean, name: string, phone: string, reason: string} | null>(null);
-  const [pendingReservationData, setPendingReservationData] = useState<any>(null);
-
+  
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [draggedResId, setDraggedResId] = useState<string | null>(null);
   const [dragTarget, setDragTarget] = useState<{ seatId: string, startTime: string, endTime: string, isValid: boolean } | null>(null);
@@ -66,17 +65,14 @@ export default function App() {
   const [editForm, setEditForm] = useState({ name: '', phone: '', startTime: '', endTime: '', isPaid: false, seatId: '' });
   const [activeEditingIds, setActiveEditingIds] = useState<string[]>([]);
 
-  // Auth Listener
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setAuthLoading(false);
     });
-
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
     });
-
     return () => subscription.unsubscribe();
   }, []);
 
@@ -93,14 +89,6 @@ export default function App() {
     date: r.date
   }), []);
 
-  const mapBlacklist = useCallback((b: any): BlacklistEntry => ({
-    id: b.id,
-    phone: b.phone,
-    reason: b.reason,
-    name: b.name,
-    addedAt: Number(b.added_at)
-  }), []);
-
   const fetchData = useCallback(async () => {
     if (!session) return;
     try {
@@ -109,10 +97,10 @@ export default function App() {
         supabase.from('blacklist').select('*'),
         supabase.from('simulator_groups').select('*').order('order', { ascending: true })
       ]);
-
       if (resResponse.data) setReservations(resResponse.data.map(mapReservation));
-      if (blResponse.data) setBlacklist(blResponse.data.map(mapBlacklist));
-      
+      if (blResponse.data) setBlacklist(blResponse.data.map(b => ({
+        id: b.id, phone: b.phone, reason: b.reason, name: b.name, addedAt: Number(b.added_at)
+      })));
       if (groupsResponse.data && groupsResponse.data.length > 0) {
         setSimulatorGroups(groupsResponse.data);
       } else if (simulatorGroups.length === 0) {
@@ -121,22 +109,15 @@ export default function App() {
     } catch (error) {
       console.error("Data fetch error:", error);
     }
-  }, [session, mapReservation, mapBlacklist]);
+  }, [session, mapReservation]);
 
-  // Realtime Subscriptions
   useEffect(() => {
     if (!session) return;
     fetchData();
     const resChannel = supabase.channel('realtime-reservations')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'reservations' }, () => fetchData())
       .subscribe();
-    const blChannel = supabase.channel('realtime-blacklist')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'blacklist' }, () => fetchData())
-      .subscribe();
-    return () => {
-      supabase.removeChannel(resChannel);
-      supabase.removeChannel(blChannel);
-    };
+    return () => { supabase.removeChannel(resChannel); };
   }, [session, fetchData]);
 
   useEffect(() => {
@@ -151,11 +132,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const interval = setInterval(() => setNow(new Date()), 60000);
+    const interval = setInterval(() => setNow(new Date()), 30000);
     return () => clearInterval(interval);
   }, []);
 
-  // Form Sync Logic - Refined to prevent clearing when adding seats to group
   useEffect(() => {
     if (selectedIds.length === 0) {
       setEditForm({ name: '', phone: '', startTime: '', endTime: '', isPaid: false, seatId: '' });
@@ -163,31 +143,16 @@ export default function App() {
       setIsGroupMode(false);
       return;
     }
-    
-    if (selectedIds.length > 1) {
-        setIsGroupMode(true);
-    } else if (selectedIds.length === 1 && !activeEditingIds.includes(selectedIds[0])) {
-        // Only disable group mode if we selected a completely new single item
-        setIsGroupMode(false);
-    }
-    
-    // Check if the actual selection changed (different number of items or different items)
     const selectionChanged = JSON.stringify(selectedIds.sort()) !== JSON.stringify(activeEditingIds.sort());
-    
     if (selectionChanged) {
       const selectedReservations = reservations.filter(r => selectedIds.includes(r.id));
       if (selectedReservations.length > 0) {
         const firstRes = selectedReservations[0];
-        
-        // If we are already editing and just added/removed an ID, don't overwrite if form has data
-        // Unless it's a brand new selection
         const isActuallyNewSelection = selectedIds.length === 1 && !activeEditingIds.includes(selectedIds[0]);
-        
         if (isActuallyNewSelection || activeEditingIds.length === 0) {
           const isSameName = selectedReservations.every(r => r.name === firstRes.name);
           const isSamePhone = selectedReservations.every(r => r.phone === firstRes.phone);
           const isSamePaid = selectedReservations.every(r => r.isPaid === firstRes.isPaid);
-
           setEditForm({ 
             name: isSameName ? firstRes.name : '', 
             phone: isSamePhone ? firstRes.phone : '', 
@@ -202,7 +167,7 @@ export default function App() {
     }
   }, [selectedIds, reservations, activeEditingIds]);
 
-  const seats = useMemo(() => {
+  const seatsList = useMemo(() => {
     let allSeats: Seat[] = [];
     let currentIndex = 1;
     simulatorGroups.forEach(group => {
@@ -213,7 +178,7 @@ export default function App() {
     return allSeats;
   }, [simulatorGroups, seatLabelPrefix]);
 
-  const currentViewSeats = seats.filter(s => s.type === view);
+  const currentViewSeats = seatsList.filter(s => s.type === view);
   const totalHours = endHour - START_HOUR;
   const totalContentHeight = (totalHours * HOUR_HEIGHT) + HEADER_HEIGHT;
 
@@ -260,17 +225,11 @@ export default function App() {
 
   const handleSaveEdit = async () => {
     if (selectedIds.length === 0) return;
-    if (!editForm.name || !editForm.phone) {
-        alert("Lütfen isim ve telefon bilgilerini doldurun.");
-        return;
-    }
     try {
       await Promise.all(selectedIds.map(id => {
         const payload: any = {
-            name: editForm.name,
-            phone: editForm.phone,
-            start_time: editForm.startTime,
-            end_time: editForm.endTime,
+            name: editForm.name, phone: editForm.phone,
+            start_time: editForm.startTime, end_time: editForm.endTime,
             is_paid: editForm.isPaid
         };
         if (!isGroupMode && selectedIds.length === 1 && editForm.seatId) {
@@ -278,90 +237,61 @@ export default function App() {
         }
         return supabase.from('reservations').update(payload).eq('id', id);
       }));
-      alert("Seçili tüm kayıtlar güncellendi.");
-    } catch (e) { console.error("Update error:", e); }
+      alert("Güncellendi.");
+    } catch (e) { console.error(e); }
   };
 
-  const handleGroupSeatToggle = async (targetSeatId: string) => {
-    const refRes = reservations.find(r => r.id === selectedIds[0]);
-    if (!refRes) return;
-
-    const existingRes = reservations.find(r => 
-        r.groupId === refRes.groupId && r.date === refRes.date && r.seatId === targetSeatId
-    );
-
-    if (existingRes) {
-        if (selectedIds.length <= 1) { alert("Gruptaki son kaydı buradan silemezsiniz."); return; }
-        if(confirm(`${targetSeatId} masasını gruptan çıkarmak istiyor musunuz?`)){
-            try {
-                await supabase.from('reservations').delete().eq('id', existingRes.id);
-                setSelectedIds(prev => prev.filter(id => id !== existingRes.id));
-            } catch (e) { console.error(e); }
-        }
-    } else {
-        if (checkOverlap(editForm.startTime, editForm.endTime, reservations.filter(r => r.seatId === targetSeatId && r.date === dateStr))) {
-            alert("Bu masa dolu!"); return;
-        }
-        try {
-            // Use values from editForm to ensure consistency when adding new seat to group
-            const { data, error } = await supabase.from('reservations').insert({
-                group_id: refRes.groupId,
-                seat_id: targetSeatId,
-                name: editForm.name || refRes.name,
-                phone: editForm.phone || refRes.phone,
-                start_time: editForm.startTime,
-                end_time: editForm.endTime,
-                is_paid: editForm.isPaid,
-                created_at: Date.now(),
-                date: dateStr,
-                user_id: session.user.id
-            }).select();
-            
-            if (error) throw error;
-            if (data) setSelectedIds(prev => [...prev, data[0].id]);
-        } catch(e) { console.error("Grup ekleme hatası:", e); }
-    }
-  };
-
-  const handleSelectGroup = () => {
-    if (selectedIds.length === 0) return;
-    const currentRes = reservations.find(r => r.id === selectedIds[0]);
-    if (!currentRes) return;
-    const groupToSelect = reservations.filter(r => r.groupId === currentRes.groupId && r.date === currentRes.date);
-    setSelectedIds(groupToSelect.map(r => r.id));
-  };
-
+  // Fix: Implemented missing handleSelection to manage selected IDs
   const handleSelection = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (e.ctrlKey || e.metaKey) {
-      setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+    if (isCtrlPressed) {
+      setSelectedIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]);
     } else {
       setSelectedIds([id]);
     }
   };
 
-  const finalizeReservation = async (data: any) => {
-    const newGroupId = Math.random().toString(36).substr(2, 9);
-    try {
-      await supabase.from('reservations').insert(data.selectedSeats.map((seatId: string) => ({
-            group_id: newGroupId,
-            seat_id: seatId, 
-            name: data.name, 
-            phone: data.phone,
-            start_time: data.startTime, 
-            end_time: data.endTime,
-            is_paid: data.isPaid, 
-            created_at: Date.now(),
-            date: dateStr,
-            user_id: session.user.id
-      })));
-      setIsModalOpen(false);
-    } catch (e) { console.error("Insert error:", e); }
+  const handleGroupSeatToggle = async (targetSeatId: string) => {
+    const refRes = reservations.find(r => r.id === selectedIds[0]);
+    if (!refRes) return;
+    const existingRes = reservations.find(r => r.groupId === refRes.groupId && r.date === refRes.date && r.seatId === targetSeatId);
+    if (existingRes) {
+        if (selectedIds.length <= 1) return;
+        if(confirm(`${targetSeatId} çıkarılsın mı?`)){
+            await supabase.from('reservations').delete().eq('id', existingRes.id);
+            setSelectedIds(prev => prev.filter(id => id !== existingRes.id));
+        }
+    } else {
+        if (checkOverlap(editForm.startTime, editForm.endTime, reservations.filter(r => r.seatId === targetSeatId && r.date === dateStr))) {
+            alert("Masa dolu!"); return;
+        }
+        const { data } = await supabase.from('reservations').insert({
+            group_id: refRes.groupId, seat_id: targetSeatId, name: editForm.name || refRes.name,
+            phone: editForm.phone || refRes.phone, start_time: editForm.startTime, end_time: editForm.endTime,
+            is_paid: editForm.isPaid, created_at: Date.now(), date: dateStr, user_id: session.user.id
+        }).select();
+        if (data) setSelectedIds(prev => [...prev, data[0].id]);
+    }
   };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
+  const handleSelectGroup = () => {
+    const currentRes = reservations.find(r => r.id === selectedIds[0]);
+    if (!currentRes) return;
+    const group = reservations.filter(r => r.groupId === currentRes.groupId && r.date === currentRes.date);
+    setSelectedIds(group.map(r => r.id));
   };
+
+  const finalizeReservation = async (data: any) => {
+    const gid = Math.random().toString(36).substr(2, 9);
+    await supabase.from('reservations').insert(data.selectedSeats.map((sid: string) => ({
+        group_id: gid, seat_id: sid, name: data.name, phone: data.phone,
+        start_time: data.startTime, end_time: data.endTime, is_paid: data.isPaid,
+        created_at: Date.now(), date: dateStr, user_id: session.user.id
+    })));
+    setIsModalOpen(false);
+  };
+
+  const handleLogout = async () => { await supabase.auth.signOut(); };
 
   if (authLoading) return <div className="fixed inset-0 bg-sim-black flex items-center justify-center text-sim-yellow"><Loader2 className="animate-spin" size={48}/></div>;
   if (!session) return <LoginScreen />;
@@ -374,10 +304,10 @@ export default function App() {
         <div className="flex-1 flex flex-col min-w-0 border-r border-sim-border">
           <header className="flex items-center justify-between px-6 py-4 border-b border-sim-border bg-[#121212] shrink-0 z-[70]">
             <div className="flex items-center gap-8">
-                <div className="h-20 w-28 flex items-center justify-center overflow-hidden">
-                    <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
+                <div className="h-20 w-28 flex items-center justify-center relative group/logo cursor-pointer">
+                    <div className="absolute inset-0 bg-sim-yellow/0 rounded-full blur-2xl group-hover/logo:bg-sim-yellow/30 transition-all duration-500 scale-75 group-hover/logo:scale-110"></div>
+                    <img src="https://i.ibb.co/Lz00B2y8/input-file-0.png" alt="Logo" className="w-full h-full object-contain relative z-10 transition-transform duration-500 group-hover/logo:scale-105" />
                 </div>
-                
                 <div className="flex items-center gap-1">
                     <button onClick={(e) => {e.stopPropagation(); setCurrentDate(prev => addDays(prev, -1))}} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-sim-yellow rounded-full transition-all"><ChevronLeft size={16}/></button>
                     <div onClick={(e) => {e.stopPropagation(); dateInputRef.current?.showPicker()}} className="flex flex-col items-center px-4 cursor-pointer group relative">
@@ -393,7 +323,6 @@ export default function App() {
                 <button onClick={handleLogout} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg transition-colors border border-red-500/20" title="Çıkış Yap"><LogOut size={20} /></button>
                 <button onClick={(e) => {e.stopPropagation(); setIsSettingsModalOpen(true)}} className="p-2 text-sim-yellow hover:bg-sim-yellow/10 rounded-lg transition-colors border border-sim-yellow/20" title="Ayarlar"><Settings size={20} /></button>
                 <button onClick={(e) => {e.stopPropagation(); setIsBlacklistOpen(true)}} className="p-2 text-sim-yellow hover:bg-sim-yellow/10 rounded-lg transition-colors border border-sim-yellow/20" title="Kara Liste"><AlertOctagon size={20} /></button>
-                
                 <div className="flex bg-sim-black p-1 rounded-lg border border-sim-border overflow-hidden">
                     {simulatorGroups.map(group => (
                         <button key={group.id} onClick={(e) => {e.stopPropagation(); setView(group.id)}} className={`px-4 py-1.5 rounded-md font-bold text-[10px] uppercase transition-all whitespace-nowrap ${view === group.id ? 'bg-sim-yellow text-black' : 'text-gray-500 hover:text-gray-300'}`}>{group.name}</button>
@@ -428,17 +357,29 @@ export default function App() {
                             <div className="h-[40px] border-b border-sim-yellow bg-sim-black/80 sticky top-0 z-[60] flex items-center justify-center font-bold text-sim-yellow text-[10px] tracking-widest uppercase backdrop-blur-md">{seat.label}</div>
                             <div className="relative flex-1 w-full" onDragOver={(e) => handleDragOver(e, seat.id)} onDrop={(e) => handleDrop(e, seat.id)}>
                                 <div className="absolute inset-0 z-10 cursor-default" onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); const y = e.clientY - e.currentTarget.getBoundingClientRect().top; const t = minutesToTime(Math.floor(((START_HOUR * 60) + (y / HOUR_HEIGHT * 60)) / 30) * 30); setContextMenu({ visible: true, x: e.pageX, y: e.pageY, seatId: seat.id, time: t }); }} />
+                                
+                                {/* Drag Target Ghosting */}
+                                {dragTarget && dragTarget.seatId === seat.id && (
+                                  <div 
+                                    className={`absolute left-0 right-0 z-40 border-2 border-dashed transition-colors ${dragTarget.isValid ? 'bg-sim-yellow/20 border-sim-yellow' : 'bg-red-500/20 border-red-500'}`}
+                                    style={getGridPosition(dragTarget.startTime, dragTarget.endTime, START_HOUR, endHour)}
+                                  >
+                                    <div className="flex h-full items-center justify-center text-[8px] font-black text-white/50">{dragTarget.startTime}-{dragTarget.endTime}</div>
+                                  </div>
+                                )}
+
                                 {reservations.filter(r => r.seatId === seat.id && r.date === dateStr).map(res => {
                                     const pos = getGridPosition(res.startTime, res.endTime, START_HOUR, endHour);
                                     const selected = selectedIds.includes(res.id);
-                                    const status = now.getHours() * 60 + now.getMinutes() > timeToMinutes(res.endTime) && isSameDay(currentDate, now) ? 'PAST' : 'FUTURE';
+                                    const status = (now.getHours() * 60 + now.getMinutes() > timeToMinutes(res.endTime) && isSameDay(currentDate, now)) || currentDate < now && !isSameDay(currentDate, now) ? 'PAST' : 'FUTURE';
                                     return (
                                         <div 
                                           key={res.id} draggable={!isCtrlPressed} onDragStart={(e) => handleDragStart(e, res.id)} onClick={(e) => handleSelection(e, res.id)} 
                                           onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ visible: true, x: e.pageX, y: e.pageY, reservationId: res.id }); }}
-                                          className={`absolute left-0 right-0 rounded-sm overflow-hidden flex flex-col justify-center text-center p-1 transition-all border z-[50] ${selected ? 'border-white ring-4 ring-sim-yellow/50 scale-[1.05] z-[70] shadow-[0_0_30px_rgba(251,191,36,0.6)] brightness-125' : ''} ${res.isPaid ? 'bg-emerald-600 text-white border-emerald-500' : 'bg-red-600 text-white border-red-500 animate-pulse'} ${status === 'PAST' ? 'opacity-40 grayscale pointer-events-none' : 'cursor-grab active:cursor-grabbing'}`}
+                                          className={`absolute left-0 right-0 rounded-sm overflow-hidden flex flex-col justify-center text-center p-1 transition-all border z-[50] ${selected ? 'border-white ring-4 ring-sim-yellow/50 z-[70] shadow-[0_0_30px_rgba(251,191,36,0.6)] brightness-125' : ''} ${res.isPaid ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm' : 'bg-red-600 text-white border-red-500 animate-pulse'} ${status === 'PAST' ? 'bg-sim-yellow/20 border-sim-yellow/40 text-sim-yellow/60 grayscale-0 opacity-100 cursor-pointer pointer-events-auto' : 'cursor-grab active:cursor-grabbing'}`}
                                           style={{ top: pos.top, height: pos.height }}
                                         >
+                                            {res.isPaid && <div className="absolute top-1 right-1 bg-white/20 rounded-full p-0.5"><Check size={8} className="text-white" /></div>}
                                             <div className="text-[10px] font-bold opacity-90 leading-none mb-0.5">{res.startTime}-{res.endTime}</div>
                                             <div className="font-black text-[12px] truncate uppercase px-1 tracking-tight">{res.name}</div>
                                         </div>
@@ -473,7 +414,7 @@ export default function App() {
                     <div className="space-y-2">
                         <div className="flex items-center justify-between mb-1.5"><label className={`text-[9px] font-black uppercase tracking-widest flex items-center gap-1 ${isGroupMode ? 'text-green-500' : 'text-gray-500'}`}>{isGroupMode ? <CheckCircle2 size={10}/> : <Repeat size={10}/>} {isGroupMode ? "GRUP MODU: AKTİF" : "MASA DEĞİŞTİRME"}</label><button onClick={() => setIsGroupMode(!isGroupMode)} className={`text-[8px] font-bold px-2 py-1 rounded border transition-all ${isGroupMode ? 'bg-green-600 text-white border-green-500 shadow-lg shadow-green-500/20' : 'bg-sim-dark text-gray-400 border-sim-border hover:text-white'}`}>{isGroupMode ? "MOD: GRUP" : "MOD: TEK"}</button></div>
                         <div className={`grid grid-cols-4 gap-2 p-3 rounded-xl border-2 transition-all duration-300 ${isGroupMode ? 'bg-green-950/20 border-green-500' : 'bg-sim-black border-sim-border'}`}>
-                            {seats.filter(s => s.type === view).map(s => {
+                            {currentViewSeats.map(s => {
                                 const isSel = selectedIds.some(id => reservations.find(r => r.id === id)?.seatId === s.id);
                                 return <button key={s.id} onClick={() => isGroupMode ? handleGroupSeatToggle(s.id) : setEditForm({...editForm, seatId: s.id})} className={`p-2 text-[8px] font-black rounded border transition-all ${isSel ? 'bg-sim-yellow text-black border-sim-yellow shadow-lg shadow-yellow-500/20' : 'bg-sim-gray text-gray-400 border-sim-border hover:border-gray-500'}`}>{s.label}</button>
                             })}
@@ -489,20 +430,26 @@ export default function App() {
                   </div>
                   <div className="flex flex-col gap-3 pt-6 border-t border-sim-border">
                     <button onClick={handleSaveEdit} className="w-full bg-sim-yellow text-black font-black py-4 rounded-xl text-[11px] uppercase flex items-center justify-center gap-2 shadow-lg shadow-yellow-500/20 hover:scale-[1.02] active:scale-95 transition-all"><Save size={16} /> Güncelle</button>
-                    <button onClick={async () => { if(confirm('Silmek istediğine emin misin?')) { await Promise.all(selectedIds.map(id => supabase.from('reservations').delete().eq('id', id))); setSelectedIds([]); } }} className="w-full bg-transparent border border-red-900/50 text-red-700 font-black py-3 rounded-xl text-[10px] uppercase hover:bg-red-950/20 transition-all">Sil</button>
+                    <button onClick={async () => { if(confirm('Sil?')) { await Promise.all(selectedIds.map(id => supabase.from('reservations').delete().eq('id', id))); setSelectedIds([]); } }} className="w-full bg-transparent border border-red-900/50 text-red-700 font-black py-3 rounded-xl text-[10px] uppercase hover:bg-red-950/20 transition-all">Sil</button>
                   </div>
               </div>
             )}
           </div>
         </aside>
 
-        <ReservationModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={finalizeReservation} availableSeats={seats} view={view} simulatorGroups={simulatorGroups} />
+        <ReservationModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={finalizeReservation} availableSeats={seatsList} view={view} simulatorGroups={simulatorGroups} />
         <BlacklistModal isOpen={isBlacklistOpen} onClose={() => setIsBlacklistOpen(false)} blacklist={blacklist} onUpdate={fetchData} />
         <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} groups={simulatorGroups} onUpdateGroups={setSimulatorGroups} endHour={endHour} onUpdateEndHour={setEndHour} seatLabelPrefix={seatLabelPrefix} onUpdatePrefix={setSeatLabelPrefix} />
         <InfoModal data={infoData} onClose={() => { setIsInfoOpen(false); setInfoData(null); }} />
         {contextMenu.visible && <ContextMenu {...contextMenu} onClose={() => setContextMenu({...contextMenu, visible: false})} onAction={async (action) => {
              if (action === 'CREATE_NEW') setIsModalOpen(true);
-             if (action === 'SHOW_INFO') { const r = reservations.find(res => res.id === contextMenu.reservationId); if(r) { setInfoData({...r, seats: reservations.filter(res => res.groupId === r.groupId).map(res => res.seatId)}); setIsInfoOpen(true); } }
+             if (action === 'SHOW_INFO') { 
+                const r = reservations.find(res => res.id === contextMenu.reservationId); 
+                if(r) { 
+                    setInfoData({...r, seats: reservations.filter(res => res.groupId === r.groupId).map(res => res.seatId)}); 
+                    setIsInfoOpen(true); 
+                } 
+             }
              setContextMenu({...contextMenu, visible: false});
         }} type={contextMenu.reservationId ? 'RESERVATION' : 'EMPTY'} />}
       </div>
@@ -526,32 +473,33 @@ function LoginScreen() {
         setLoading(true);
         setError('');
         const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) setError('Giriş başarısız. Bilgilerinizi kontrol edin.');
+        if (error) setError('Giriş başarısız.');
         setLoading(false);
     };
     return (
         <div className="fixed inset-0 bg-sim-black flex items-center justify-center p-4">
             <div className="w-full max-w-[400px] bg-sim-dark border border-sim-yellow/30 p-10 rounded-2xl shadow-2xl relative overflow-hidden transition-all">
                 <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-sim-yellow to-transparent"></div>
-                <div className="flex flex-col items-center mb-8">
-                    <img src="/logo.png" alt="Logo" className="h-24 mb-4 object-contain" />
-                    <h2 className="text-sim-yellow font-black text-xs tracking-[0.3em] uppercase opacity-80">SimRacing Manager</h2>
+                <div className="flex flex-col items-center mb-8 group/logo cursor-pointer relative">
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32 bg-sim-yellow/0 rounded-full blur-2xl group-hover/logo:bg-sim-yellow/30 transition-all duration-500 scale-75 group-hover/logo:scale-125"></div>
+                    <img src="https://i.ibb.co/Lz00B2y8/input-file-0.png" alt="Logo" className="h-24 mb-4 object-contain relative z-10 transition-transform duration-500 group-hover/logo:scale-110" />
+                    <h2 className="text-sim-yellow font-black text-xs tracking-[0.3em] uppercase opacity-80 relative z-10">SimRacing Manager</h2>
                 </div>
-                <form onSubmit={handleLogin} className="space-y-6">
+                <form onSubmit={handleLogin} className="space-y-6 relative z-10">
                     <div className="space-y-2">
                         <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2"><Mail size={12}/> E-Posta</label>
-                        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="w-full bg-sim-black border border-sim-border rounded-xl p-4 text-sm text-white outline-none focus:border-sim-yellow focus:ring-1 focus:ring-sim-yellow transition-all" placeholder="admin@simracing.com" />
+                        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="w-full bg-sim-black border border-sim-border rounded-xl p-4 text-sm text-white outline-none focus:border-sim-yellow transition-all" />
                     </div>
                     <div className="space-y-2">
                         <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2"><Lock size={12}/> Şifre</label>
-                        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required className="w-full bg-sim-black border border-sim-border rounded-xl p-4 text-sm text-white outline-none focus:border-sim-yellow focus:ring-1 focus:ring-sim-yellow transition-all" placeholder="••••••••" />
+                        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required className="w-full bg-sim-black border border-sim-border rounded-xl p-4 text-sm text-white outline-none focus:border-sim-yellow transition-all" />
                     </div>
                     {error && <div className="text-red-500 text-[10px] font-bold text-center uppercase tracking-wider bg-red-500/10 p-2 rounded-lg border border-red-500/20">{error}</div>}
-                    <button type="submit" disabled={loading} className="w-full bg-sim-yellow text-black font-black py-4 rounded-xl text-xs uppercase hover:brightness-110 active:scale-95 transition-all flex items-center justify-center gap-2 shadow-lg shadow-yellow-500/20 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <button type="submit" disabled={loading} className="w-full bg-sim-yellow text-black font-black py-4 rounded-xl text-xs uppercase hover:brightness-110 transition-all flex items-center justify-center gap-2 shadow-lg shadow-yellow-500/20">
                         {loading ? <Loader2 className="animate-spin" size={18}/> : 'Giriş Yap'}
                     </button>
                 </form>
-                <div className="mt-8 text-center"><p className="text-[8px] text-gray-600 font-bold uppercase tracking-widest">© 2024 SIMRACING MANAGEMENT SYSTEM</p></div>
+                <div className="mt-8 text-center relative z-10"><p className="text-[8px] text-gray-600 font-bold uppercase tracking-widest">© 2024 SIMRACING MANAGEMENT SYSTEM</p></div>
             </div>
         </div>
     );
