@@ -328,7 +328,7 @@ export default function App() {
             <div className="flex items-center gap-8">
                 <div className="h-20 w-28 flex items-center justify-center relative group/logo cursor-pointer">
                     <div className="absolute inset-0 bg-sim-yellow/0 rounded-full blur-2xl group-hover/logo:bg-sim-yellow/30 transition-all duration-500 scale-75 group-hover/logo:scale-110"></div>
-                    <img src="https://i.ibb.co/Lz00B2y8/input-file-0.png" alt="Logo" className="w-full h-full object-contain relative z-10 transition-transform duration-500 group-hover/logo:scale-105" />
+                    <img src="/logo.png" alt="Logo" className="w-full h-full object-contain relative z-10 transition-transform duration-500 group-hover/logo:scale-105" />
                 </div>
                 <div className="flex items-center gap-1">
                     <button onClick={(e) => {e.stopPropagation(); setCurrentDate(prev => addDays(prev, -1))}} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-sim-yellow rounded-full transition-all"><ChevronLeft size={16}/></button>
@@ -532,7 +532,7 @@ function LoginScreen() {
                 <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-sim-yellow to-transparent"></div>
                 <div className="flex flex-col items-center mb-8 group/logo cursor-pointer relative">
                     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32 bg-sim-yellow/0 rounded-full blur-2xl group-hover/logo:bg-sim-yellow/30 transition-all duration-500 scale-75 group-hover/logo:scale-125"></div>
-                    <img src="https://i.ibb.co/Lz00B2y8/input-file-0.png" alt="Logo" className="h-24 mb-4 object-contain relative z-10 transition-transform duration-500 group-hover/logo:scale-110" />
+                    <img src="/logo.png" alt="Logo" className="h-24 mb-4 object-contain relative z-10 transition-transform duration-500 group-hover/logo:scale-110" />
                     <h2 className="text-sim-yellow font-black text-xs tracking-[0.3em] uppercase opacity-80 relative z-10">SimRacing Manager</h2>
                 </div>
                 <form onSubmit={handleLogin} className="space-y-6 relative z-10">
