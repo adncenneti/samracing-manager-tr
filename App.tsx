@@ -375,7 +375,7 @@ export default function App() {
           <header className="flex items-center justify-between px-6 py-4 border-b border-sim-border bg-[#121212] shrink-0 z-[70]">
             <div className="flex items-center gap-8">
                 <div className="h-20 w-28 flex items-center justify-center overflow-hidden">
-                    <img src="https://i.ibb.co/Lz00B2y8/input-file-0.png" alt="Logo" className="w-full h-full object-contain" />
+                    <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
                 </div>
                 
                 <div className="flex items-center gap-1">
@@ -534,7 +534,7 @@ function LoginScreen() {
             <div className="w-full max-w-[400px] bg-sim-dark border border-sim-yellow/30 p-10 rounded-2xl shadow-2xl relative overflow-hidden transition-all">
                 <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-sim-yellow to-transparent"></div>
                 <div className="flex flex-col items-center mb-8">
-                    <img src="https://i.ibb.co/Lz00B2y8/input-file-0.png" alt="Logo" className="h-24 mb-4 object-contain" />
+                    <img src="/logo.png" alt="Logo" className="h-24 mb-4 object-contain" />
                     <h2 className="text-sim-yellow font-black text-xs tracking-[0.3em] uppercase opacity-80">SimRacing Manager</h2>
                 </div>
                 <form onSubmit={handleLogin} className="space-y-6">
