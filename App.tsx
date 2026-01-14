@@ -1,13 +1,13 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { format, addDays, isSameDay } from 'date-fns';
+import { format, addDays, isSameDay, startOfMonth, endOfMonth, isBefore, isAfter, parseISO } from 'date-fns';
 import { tr } from 'date-fns/locale';
 import { 
   Calendar, ChevronLeft, ChevronRight, Plus, Trash, Save, Edit3, 
   MousePointer2, FileSpreadsheet, AlertOctagon, Clock, Coins, Ban, 
   Users, Image as ImageIcon, MousePointerSquareDashed, Settings, 
   Minus, Repeat, CheckCircle2, UserPlus, LogOut, Lock, Mail, Loader2,
-  Check
+  Check, Trash2
 } from 'lucide-react';
 import { Reservation, SimulatorType, Seat, ContextMenuState, BlacklistEntry, SimulatorGroup } from './types';
 import { generateSeats, checkOverlap, getGridPosition, START_HOUR, DEFAULT_END_HOUR, timeToMinutes, minutesToTime, formatPhoneNumber } from './utils';
@@ -17,7 +17,6 @@ import { BlacklistModal } from './components/BlacklistModal';
 import { SettingsModal } from './components/SettingsModal';
 import { InfoModal } from './components/InfoModal';
 import { supabase } from './supabaseClient';
-import * as XLSX from 'xlsx';
 
 const SCREENSAVER_TIMEOUT = 10 * 60 * 1000;
 const HOUR_HEIGHT = 60;
@@ -132,7 +131,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const interval = setInterval(() => setNow(new Date()), 30000);
+    const interval = setInterval(() => setNow(new Date()), 10000);
     return () => clearInterval(interval);
   }, []);
 
@@ -187,6 +186,14 @@ export default function App() {
     e.dataTransfer.setData('text/plain', id);
     setDraggedResId(id);
     setSelectedIds([]); 
+    // Opacity effect for visual clarity
+    (e.target as HTMLElement).style.opacity = '0.4';
+  };
+
+  const handleDragEnd = (e: React.DragEvent) => {
+    setDraggedResId(null);
+    setDragTarget(null);
+    (e.target as HTMLElement).style.opacity = '1';
   };
 
   const handleDragOver = useCallback((e: React.DragEvent, seatId: string) => {
@@ -241,7 +248,6 @@ export default function App() {
     } catch (e) { console.error(e); }
   };
 
-  // Fix: Implemented missing handleSelection to manage selected IDs
   const handleSelection = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     if (isCtrlPressed) {
@@ -256,11 +262,9 @@ export default function App() {
     if (!refRes) return;
     const existingRes = reservations.find(r => r.groupId === refRes.groupId && r.date === refRes.date && r.seatId === targetSeatId);
     if (existingRes) {
-        if (selectedIds.length <= 1) return;
-        if(confirm(`${targetSeatId} çıkarılsın mı?`)){
-            await supabase.from('reservations').delete().eq('id', existingRes.id);
-            setSelectedIds(prev => prev.filter(id => id !== existingRes.id));
-        }
+        // Fix: Removed warning for removing last item, let user manage as they wish
+        await supabase.from('reservations').delete().eq('id', existingRes.id);
+        setSelectedIds(prev => prev.filter(id => id !== existingRes.id));
     } else {
         if (checkOverlap(editForm.startTime, editForm.endTime, reservations.filter(r => r.seatId === targetSeatId && r.date === dateStr))) {
             alert("Masa dolu!"); return;
@@ -279,6 +283,24 @@ export default function App() {
     if (!currentRes) return;
     const group = reservations.filter(r => r.groupId === currentRes.groupId && r.date === currentRes.date);
     setSelectedIds(group.map(r => r.id));
+  };
+
+  const handleCleanDay = async () => {
+      if(!confirm(`${dateStr} tarihindeki TÜM randevular silinecek. Emin misiniz?`)) return;
+      if(!confirm(`GERÇEKTEN EMİN MİSİNİZ? Bu işlem geri alınamaz.`)) return;
+      await supabase.from('reservations').delete().eq('date', dateStr);
+      fetchData();
+  };
+
+  const handleCleanMonth = async () => {
+      if(!confirm(`Mevcut ayın (Bugün hariç geçmiş tüm günler) verileri temizlenecek. Emin misiniz?`)) return;
+      if(!confirm(`SON UYARI: Veriler kalıcı olarak silinecek.`)) return;
+      
+      const start = format(startOfMonth(new Date()), 'yyyy-MM-dd');
+      const today = format(new Date(), 'yyyy-MM-dd');
+      
+      await supabase.from('reservations').delete().gte('date', start).lt('date', today);
+      fetchData();
   };
 
   const finalizeReservation = async (data: any) => {
@@ -358,25 +380,42 @@ export default function App() {
                             <div className="relative flex-1 w-full" onDragOver={(e) => handleDragOver(e, seat.id)} onDrop={(e) => handleDrop(e, seat.id)}>
                                 <div className="absolute inset-0 z-10 cursor-default" onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); const y = e.clientY - e.currentTarget.getBoundingClientRect().top; const t = minutesToTime(Math.floor(((START_HOUR * 60) + (y / HOUR_HEIGHT * 60)) / 30) * 30); setContextMenu({ visible: true, x: e.pageX, y: e.pageY, seatId: seat.id, time: t }); }} />
                                 
-                                {/* Drag Target Ghosting */}
+                                {/* Drag Target Ghosting - Improved Visibility */}
                                 {dragTarget && dragTarget.seatId === seat.id && (
                                   <div 
-                                    className={`absolute left-0 right-0 z-40 border-2 border-dashed transition-colors ${dragTarget.isValid ? 'bg-sim-yellow/20 border-sim-yellow' : 'bg-red-500/20 border-red-500'}`}
+                                    className={`absolute left-0 right-0 z-[80] border-4 border-dashed transition-all duration-75 shadow-[0_0_30px_rgba(34,197,94,0.3)] ${dragTarget.isValid ? 'bg-green-500/30 border-green-400' : 'bg-red-500/30 border-red-400'}`}
                                     style={getGridPosition(dragTarget.startTime, dragTarget.endTime, START_HOUR, endHour)}
                                   >
-                                    <div className="flex h-full items-center justify-center text-[8px] font-black text-white/50">{dragTarget.startTime}-{dragTarget.endTime}</div>
+                                    <div className="flex h-full items-center justify-center text-xl font-black text-green-400 drop-shadow-[0_0_10px_rgba(34,197,94,1)] tracking-tighter">
+                                        {dragTarget.startTime} - {dragTarget.endTime}
+                                    </div>
                                   </div>
                                 )}
 
                                 {reservations.filter(r => r.seatId === seat.id && r.date === dateStr).map(res => {
                                     const pos = getGridPosition(res.startTime, res.endTime, START_HOUR, endHour);
                                     const selected = selectedIds.includes(res.id);
-                                    const status = (now.getHours() * 60 + now.getMinutes() > timeToMinutes(res.endTime) && isSameDay(currentDate, now)) || currentDate < now && !isSameDay(currentDate, now) ? 'PAST' : 'FUTURE';
+                                    const currentTimeMins = now.getHours() * 60 + now.getMinutes();
+                                    const resStartMins = timeToMinutes(res.startTime);
+                                    const resEndMins = timeToMinutes(res.endTime);
+                                    
+                                    const isCurrentDate = isSameDay(currentDate, now);
+                                    const isPast = (resEndMins < currentTimeMins && isCurrentDate) || (currentDate < now && !isCurrentDate);
+                                    const isActive = isCurrentDate && currentTimeMins >= resStartMins && currentTimeMins <= resEndMins;
+                                    const isFuture = !isPast && !isActive;
+
+                                    let bgColor = isFuture ? 'bg-sim-gray border-sim-border text-gray-400' : (res.isPaid ? 'bg-emerald-600 border-emerald-500' : 'bg-red-600 border-red-500');
+                                    if(isPast) bgColor = 'bg-sim-yellow/20 border-sim-yellow/40 text-sim-yellow/60';
+
                                     return (
                                         <div 
-                                          key={res.id} draggable={!isCtrlPressed} onDragStart={(e) => handleDragStart(e, res.id)} onClick={(e) => handleSelection(e, res.id)} 
+                                          key={res.id} 
+                                          draggable={!isCtrlPressed} 
+                                          onDragStart={(e) => handleDragStart(e, res.id)} 
+                                          onDragEnd={handleDragEnd}
+                                          onClick={(e) => handleSelection(e, res.id)} 
                                           onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ visible: true, x: e.pageX, y: e.pageY, reservationId: res.id }); }}
-                                          className={`absolute left-0 right-0 rounded-sm overflow-hidden flex flex-col justify-center text-center p-1 transition-all border z-[50] ${selected ? 'border-white ring-4 ring-sim-yellow/50 z-[70] shadow-[0_0_30px_rgba(251,191,36,0.6)] brightness-125' : ''} ${res.isPaid ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm' : 'bg-red-600 text-white border-red-500 animate-pulse'} ${status === 'PAST' ? 'bg-sim-yellow/20 border-sim-yellow/40 text-sim-yellow/60 grayscale-0 opacity-100 cursor-pointer pointer-events-auto' : 'cursor-grab active:cursor-grabbing'}`}
+                                          className={`absolute left-0 right-0 rounded-sm overflow-hidden flex flex-col justify-center text-center p-1 transition-all border z-[50] ${selected ? 'ring-4 ring-white z-[90] shadow-[0_0_30px_rgba(255,255,255,0.4)] brightness-110' : ''} ${bgColor} ${isActive && !res.isPaid ? 'animate-pulse' : ''} cursor-grab active:cursor-grabbing active:z-[100]`}
                                           style={{ top: pos.top, height: pos.height }}
                                         >
                                             {res.isPaid && <div className="absolute top-1 right-1 bg-white/20 rounded-full p-0.5"><Check size={8} className="text-white" /></div>}
@@ -439,7 +478,18 @@ export default function App() {
 
         <ReservationModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={finalizeReservation} availableSeats={seatsList} view={view} simulatorGroups={simulatorGroups} />
         <BlacklistModal isOpen={isBlacklistOpen} onClose={() => setIsBlacklistOpen(false)} blacklist={blacklist} onUpdate={fetchData} />
-        <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} groups={simulatorGroups} onUpdateGroups={setSimulatorGroups} endHour={endHour} onUpdateEndHour={setEndHour} seatLabelPrefix={seatLabelPrefix} onUpdatePrefix={setSeatLabelPrefix} />
+        <SettingsModal 
+            isOpen={isSettingsModalOpen} 
+            onClose={() => setIsSettingsModalOpen(false)} 
+            groups={simulatorGroups} 
+            onUpdateGroups={setSimulatorGroups} 
+            endHour={endHour} 
+            onUpdateEndHour={setEndHour} 
+            seatLabelPrefix={seatLabelPrefix} 
+            onUpdatePrefix={setSeatLabelPrefix}
+            onCleanDay={handleCleanDay}
+            onCleanMonth={handleCleanMonth}
+        />
         <InfoModal data={infoData} onClose={() => { setIsInfoOpen(false); setInfoData(null); }} />
         {contextMenu.visible && <ContextMenu {...contextMenu} onClose={() => setContextMenu({...contextMenu, visible: false})} onAction={async (action) => {
              if (action === 'CREATE_NEW') setIsModalOpen(true);
