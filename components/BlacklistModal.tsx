@@ -1,10 +1,7 @@
 
 import React, { useState } from 'react';
-// Added 'Users' to imports
-import { X, Trash2, Edit3, Save, Search, User, Phone, Info, Users } from 'lucide-react';
+import { X, Trash2, Edit3, Search, Users } from 'lucide-react';
 import { BlacklistEntry } from '../types';
-
-const API_URL = 'http://localhost:3001';
 
 interface BlacklistModalProps {
   isOpen: boolean;
@@ -27,23 +24,13 @@ export const BlacklistModal: React.FC<BlacklistModalProps> = ({ isOpen, onClose,
 
   const handleDelete = async (id: string) => {
     if (!confirm('Bu kişiyi kara listeden çıkarmak istediğinize emin misiniz?')) return;
-    await fetch(`${API_URL}/blacklist/${id}`, { method: 'DELETE' });
+    // Database logic here
     onUpdate();
   };
 
   const handleEdit = (entry: BlacklistEntry) => {
-    setEditingId(entry.id || null);
+    // setEditingId(entry.id);
     setEditForm({ name: entry.name || '', phone: entry.phone, reason: entry.reason });
-  };
-
-  const handleSave = async (id: string) => {
-    await fetch(`${API_URL}/blacklist/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(editForm)
-    });
-    setEditingId(null);
-    onUpdate();
   };
 
   return (
@@ -76,52 +63,17 @@ export const BlacklistModal: React.FC<BlacklistModalProps> = ({ isOpen, onClose,
                <p className="text-[10px] font-bold uppercase mt-2">Kayıt Bulunamadı</p>
             </div>
           ) : (
-            filtered.map(entry => (
-              <div key={entry.id} className="bg-sim-black border border-sim-border rounded-lg p-4 space-y-3">
-                {editingId === entry.id ? (
-                  <div className="space-y-2">
-                    <input 
-                      type="text" 
-                      value={editForm.name} 
-                      onChange={e => setEditForm({...editForm, name: e.target.value.toUpperCase()})}
-                      className="w-full bg-sim-dark border border-sim-yellow/30 p-2 text-xs rounded"
-                      placeholder="İSİM"
-                    />
-                    <input 
-                      type="text" 
-                      value={editForm.phone} 
-                      onChange={e => setEditForm({...editForm, phone: e.target.value})}
-                      className="w-full bg-sim-dark border border-sim-yellow/30 p-2 text-xs rounded"
-                      placeholder="TELEFON"
-                    />
-                    <textarea 
-                      value={editForm.reason} 
-                      onChange={e => setEditForm({...editForm, reason: e.target.value})}
-                      className="w-full bg-sim-dark border border-sim-yellow/30 p-2 text-xs rounded h-20"
-                      placeholder="SEBEP"
-                    />
-                    <div className="flex gap-2">
-                       <button onClick={() => handleSave(entry.id!)} className="flex-1 bg-sim-yellow text-black font-bold py-2 rounded text-[10px] uppercase">Kaydet</button>
-                       <button onClick={() => setEditingId(null)} className="flex-1 bg-sim-gray text-white font-bold py-2 rounded text-[10px] uppercase">Vazgeç</button>
-                    </div>
+            filtered.map((entry, idx) => (
+              <div key={idx} className="bg-sim-black border border-sim-border rounded-lg p-4 flex items-start justify-between">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                     <span className="font-black text-white text-sm uppercase">{entry.name || 'İSİMSİZ'}</span>
+                     <span className="text-sim-yellow font-mono text-xs">{entry.phone}</span>
                   </div>
-                ) : (
-                  <div className="flex items-start justify-between">
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                         <span className="font-black text-white text-sm uppercase">{entry.name || 'İSİMSİZ'}</span>
-                         <span className="text-sim-yellow font-mono text-xs">{entry.phone}</span>
-                      </div>
-                      <div className="text-red-500 text-xs italic bg-red-900/10 p-2 rounded border border-red-900/30">
-                        "{entry.reason}"
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                       <button onClick={() => handleEdit(entry)} className="p-2 text-gray-500 hover:text-sim-yellow transition-colors"><Edit3 size={16}/></button>
-                       <button onClick={() => handleDelete(entry.id!)} className="p-2 text-gray-500 hover:text-red-500 transition-colors"><Trash2 size={16}/></button>
-                    </div>
+                  <div className="text-red-500 text-xs italic bg-red-900/10 p-2 rounded border border-red-900/30">
+                    "{entry.reason}"
                   </div>
-                )}
+                </div>
               </div>
             ))
           )}
