@@ -12,8 +12,6 @@ interface BlacklistModalProps {
 
 export const BlacklistModal: React.FC<BlacklistModalProps> = ({ isOpen, onClose, blacklist, onUpdate }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({ name: '', phone: '', reason: '' });
 
   if (!isOpen) return null;
 
@@ -21,17 +19,6 @@ export const BlacklistModal: React.FC<BlacklistModalProps> = ({ isOpen, onClose,
     entry.name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
     entry.phone.includes(searchTerm)
   );
-
-  const handleDelete = async (id: string) => {
-    if (!confirm('Bu kişiyi kara listeden çıkarmak istediğinize emin misiniz?')) return;
-    // Database logic here
-    onUpdate();
-  };
-
-  const handleEdit = (entry: BlacklistEntry) => {
-    // setEditingId(entry.id);
-    setEditForm({ name: entry.name || '', phone: entry.phone, reason: entry.reason });
-  };
 
   return (
     <div className="fixed inset-0 bg-black/80 z-[110] flex items-center justify-center p-4 backdrop-blur-md">
