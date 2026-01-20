@@ -1,15 +1,14 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { format, addDays, isSameDay, startOfMonth, endOfMonth, isBefore, isAfter, parseISO } from 'date-fns';
+import { format, addDays, isSameDay, startOfMonth } from 'date-fns';
 import { tr } from 'date-fns/locale';
 import { 
-  Calendar, ChevronLeft, ChevronRight, Plus, Trash, Save, Edit3, 
-  MousePointer2, FileSpreadsheet, AlertOctagon, Clock, Coins, Ban, 
-  Users, Image as ImageIcon, MousePointerSquareDashed, Settings, 
-  Minus, Repeat, CheckCircle2, UserPlus, LogOut, Lock, Mail, Loader2,
-  Check, Trash2
+  Plus, Trash, Save, Edit3, MousePointer2, AlertOctagon, Settings, 
+  Repeat, CheckCircle2, LogOut, Lock, Mail, Loader2, Check, 
+  Clock, PauseCircle, PlayCircle, Palette, RefreshCw, UserPlus,
+  ChevronLeft, ChevronRight
 } from 'lucide-react';
-import { Reservation, SimulatorType, Seat, ContextMenuState, BlacklistEntry, SimulatorGroup } from './types';
+import { Reservation, Seat, ContextMenuState, BlacklistEntry, SimulatorGroup } from './types';
 import { generateSeats, checkOverlap, getGridPosition, START_HOUR, DEFAULT_END_HOUR, timeToMinutes, minutesToTime, formatPhoneNumber } from './utils';
 import { ReservationModal } from './components/ReservationModal';
 import { ContextMenu } from './components/ContextMenu';
@@ -22,10 +21,18 @@ const SCREENSAVER_TIMEOUT = 10 * 60 * 1000;
 const HOUR_HEIGHT = 60;
 const HEADER_HEIGHT = 40;
 
-const DEFAULT_GROUPS: SimulatorGroup[] = [
-    { id: 'LOGITECH', name: 'Logitech G29', seatCount: 8, order: 0 },
-    { id: 'MOZA', name: 'Moza R5', seatCount: 8, order: 1 }
-];
+const DEFAULT_THEME = {
+  border: '#333333',
+  main: '#fbbf24',
+  timeline: '#fbbf24',
+  pastUnpaid: '#454545',
+  pastPaid: '#064e3b',
+  activeUnpaid: '#dc2626',
+  activePaid: '#059669',
+  futureUnpaid: '#1e1e1e',
+  futurePaid: '#065f46',
+  opacity: '0.8'
+};
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
@@ -40,6 +47,7 @@ export default function App() {
   const [view, setView] = useState<string>('LOGITECH');
   
   const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [suspendedGroups, setSuspendedGroups] = useState<any[]>([]);
   const [blacklist, setBlacklist] = useState<BlacklistEntry[]>([]);
   const [seatLabelPrefix, setSeatLabelPrefix] = useState('S-');
   const [endHour, setEndHour] = useState(DEFAULT_END_HOUR);
@@ -51,18 +59,20 @@ export default function App() {
   
   const [infoData, setInfoData] = useState<any>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ visible: false, x: 0, y: 0 });
-  
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [draggedResId, setDraggedResId] = useState<string | null>(null);
   const [dragTarget, setDragTarget] = useState<{ seatId: string, startTime: string, endTime: string, isValid: boolean } | null>(null);
   
   const [isCtrlPressed, setIsCtrlPressed] = useState(false);
-  const [isGroupMode, setIsGroupMode] = useState(false);
+  const [theme, setTheme] = useState(DEFAULT_THEME);
 
   const dateInputRef = useRef<HTMLInputElement>(null);
   const dateStr = format(currentDate, 'yyyy-MM-dd');
   const [editForm, setEditForm] = useState({ name: '', phone: '', startTime: '', endTime: '', isPaid: false, seatId: '' });
   const [activeEditingIds, setActiveEditingIds] = useState<string[]>([]);
+
+  // Automatic Group Mode Logic
+  const isGroupMode = useMemo(() => selectedIds.length > 1, [selectedIds]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -75,19 +85,6 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const mapReservation = useCallback((r: any): Reservation => ({
-    id: r.id,
-    groupId: r.group_id,
-    seatId: r.seat_id,
-    name: r.name,
-    phone: r.phone,
-    startTime: r.start_time,
-    endTime: r.end_time,
-    isPaid: r.is_paid,
-    createdAt: Number(r.created_at),
-    date: r.date
-  }), []);
-
   const fetchData = useCallback(async () => {
     if (!session) return;
     try {
@@ -96,27 +93,23 @@ export default function App() {
         supabase.from('blacklist').select('*'),
         supabase.from('simulator_groups').select('*').order('order', { ascending: true })
       ]);
-      if (resResponse.data) setReservations(resResponse.data.map(mapReservation));
-      if (blResponse.data) setBlacklist(blResponse.data.map(b => ({
-        id: b.id, phone: b.phone, reason: b.reason, name: b.name, addedAt: Number(b.added_at)
-      })));
-      if (groupsResponse.data && groupsResponse.data.length > 0) {
-        setSimulatorGroups(groupsResponse.data);
-      } else if (simulatorGroups.length === 0) {
-        setSimulatorGroups(DEFAULT_GROUPS);
+      if (resResponse.data) {
+        setReservations(resResponse.data.map(r => ({
+          id: r.id, groupId: r.group_id, seatId: r.seat_id, name: r.name,
+          phone: r.phone, startTime: r.start_time, endTime: r.end_time,
+          isPaid: r.is_paid, createdAt: Number(r.created_at), date: r.date
+        })));
       }
-    } catch (error) {
-      console.error("Data fetch error:", error);
-    }
-  }, [session, mapReservation]);
+      if (blResponse.data) setBlacklist(blResponse.data);
+      if (groupsResponse.data?.length > 0) setSimulatorGroups(groupsResponse.data);
+    } catch (error) { console.error(error); }
+  }, [session]);
 
   useEffect(() => {
     if (!session) return;
     fetchData();
-    const resChannel = supabase.channel('realtime-reservations')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'reservations' }, () => fetchData())
-      .subscribe();
-    return () => { supabase.removeChannel(resChannel); };
+    const interval = setInterval(() => setNow(new Date()), 1000); // 1s interval for clock sync
+    return () => clearInterval(interval);
   }, [session, fetchData]);
 
   useEffect(() => {
@@ -130,236 +123,221 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    const interval = setInterval(() => setNow(new Date()), 10000);
-    return () => clearInterval(interval);
-  }, []);
+  // Sidebar Layout Switch
+  const mainWidthClass = suspendedGroups.length > 0 ? 'w-[80%]' : 'w-full';
 
-  useEffect(() => {
-    if (selectedIds.length === 0) {
-      setEditForm({ name: '', phone: '', startTime: '', endTime: '', isPaid: false, seatId: '' });
-      setActiveEditingIds([]);
-      setIsGroupMode(false);
-      return;
-    }
-    const selectionChanged = JSON.stringify(selectedIds.sort()) !== JSON.stringify(activeEditingIds.sort());
-    if (selectionChanged) {
-      const selectedReservations = reservations.filter(r => selectedIds.includes(r.id));
-      if (selectedReservations.length > 0) {
-        const firstRes = selectedReservations[0];
-        const isActuallyNewSelection = selectedIds.length === 1 && !activeEditingIds.includes(selectedIds[0]);
-        if (isActuallyNewSelection || activeEditingIds.length === 0) {
-          const isSameName = selectedReservations.every(r => r.name === firstRes.name);
-          const isSamePhone = selectedReservations.every(r => r.phone === firstRes.phone);
-          const isSamePaid = selectedReservations.every(r => r.isPaid === firstRes.isPaid);
-          setEditForm({ 
-            name: isSameName ? firstRes.name : '', 
-            phone: isSamePhone ? firstRes.phone : '', 
-            startTime: firstRes.startTime, 
-            endTime: firstRes.endTime, 
-            isPaid: isSamePaid ? firstRes.isPaid : false, 
-            seatId: selectedIds.length === 1 ? firstRes.seatId : '' 
-          });
-        }
-        setActiveEditingIds([...selectedIds]);
-      }
-    }
-  }, [selectedIds, reservations, activeEditingIds]);
-
-  const seatsList = useMemo(() => {
-    let allSeats: Seat[] = [];
-    let currentIndex = 1;
-    simulatorGroups.forEach(group => {
-        const groupSeats = generateSeats(group.seatCount, group.id as any, currentIndex, seatLabelPrefix);
-        allSeats = [...allSeats, ...groupSeats];
-        currentIndex += group.seatCount;
+  const allSeats = useMemo(() => {
+    let seats: Seat[] = [];
+    let idx = 1;
+    simulatorGroups.forEach(g => {
+      const gs = generateSeats(g.seatCount, g.id as any, idx, seatLabelPrefix);
+      seats = [...seats, ...gs];
+      idx += g.seatCount;
     });
-    return allSeats;
+    return seats;
   }, [simulatorGroups, seatLabelPrefix]);
 
-  const currentViewSeats = seatsList.filter(s => s.type === view);
-  const totalHours = endHour - START_HOUR;
-  const totalContentHeight = (totalHours * HOUR_HEIGHT) + HEADER_HEIGHT;
+  const currentViewSeats = allSeats.filter(s => s.type === view);
 
   const handleDragStart = (e: React.DragEvent, id: string) => {
     if (isCtrlPressed) { e.preventDefault(); return; }
-    e.dataTransfer.setData('text/plain', id);
     setDraggedResId(id);
-    setSelectedIds([]); 
-    // Opacity effect for visual clarity
     (e.target as HTMLElement).style.opacity = '0.4';
   };
 
-  const handleDragEnd = (e: React.DragEvent) => {
-    setDraggedResId(null);
-    setDragTarget(null);
-    (e.target as HTMLElement).style.opacity = '1';
-  };
-
-  const handleDragOver = useCallback((e: React.DragEvent, seatId: string) => {
+  const handleDragOver = (e: React.DragEvent, seatId: string) => {
     e.preventDefault();
     if (!draggedResId) return;
     const res = reservations.find(r => r.id === draggedResId);
     if (!res) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const relY = e.clientY - rect.top;
-    const startMins = Math.round(((START_HOUR * 60) + (relY / HOUR_HEIGHT * 60)) / 5) * 5;
-    const duration = timeToMinutes(res.endTime) - timeToMinutes(res.startTime);
-    const clampedStart = Math.max(START_HOUR * 60, Math.min((endHour * 60) - duration, startMins));
-    const newS = minutesToTime(clampedStart);
-    const newE = minutesToTime(clampedStart + duration);
-    const dayReservations = reservations.filter(r => r.seatId === seatId && r.date === dateStr);
-    const overlap = checkOverlap(newS, newE, dayReservations, draggedResId);
-    setDragTarget({ seatId, startTime: newS, endTime: newE, isValid: !overlap });
-  }, [draggedResId, reservations, endHour, dateStr]);
+    const y = e.clientY - rect.top;
+    const startMins = Math.round(((START_HOUR * 60) + (y / HOUR_HEIGHT * 60)) / 5) * 5;
+    const dur = timeToMinutes(res.endTime) - timeToMinutes(res.startTime);
+    const s = minutesToTime(Math.max(START_HOUR * 60, Math.min((endHour * 60) - dur, startMins)));
+    const end = minutesToTime(timeToMinutes(s) + dur);
+    const overlap = checkOverlap(s, end, reservations.filter(r => r.seatId === seatId && r.date === dateStr), draggedResId);
+    setDragTarget({ seatId, startTime: s, endTime: end, isValid: !overlap });
+  };
 
   const handleDrop = async (e: React.DragEvent, targetId: string) => {
     e.preventDefault();
-    const currentDraggedId = draggedResId;
-    const currentDragTarget = dragTarget;
+    if (dragTarget?.isValid && draggedResId) {
+      await supabase.from('reservations').update({
+        seat_id: targetId, start_time: dragTarget.startTime, end_time: dragTarget.endTime
+      }).eq('id', draggedResId);
+    }
     setDraggedResId(null);
     setDragTarget(null);
-    if (currentDragTarget?.isValid && currentDraggedId) {
-      try {
-        await supabase.from('reservations').update({
-          seat_id: targetId,
-          start_time: currentDragTarget.startTime,
-          end_time: currentDragTarget.endTime
-        }).eq('id', currentDraggedId);
-      } catch (err) { console.error("Update error:", err); }
-    }
   };
 
-  const handleSaveEdit = async () => {
+  const handleSuspend = async () => {
     if (selectedIds.length === 0) return;
-    try {
-      await Promise.all(selectedIds.map(id => {
-        const payload: any = {
-            name: editForm.name, phone: editForm.phone,
-            start_time: editForm.startTime, end_time: editForm.endTime,
-            is_paid: editForm.isPaid
-        };
-        if (!isGroupMode && selectedIds.length === 1 && editForm.seatId) {
-            payload.seat_id = editForm.seatId;
-        }
-        return supabase.from('reservations').update(payload).eq('id', id);
-      }));
-      alert("Güncellendi.");
-    } catch (e) { console.error(e); }
+    const ref = reservations.find(r => r.id === selectedIds[0]);
+    if (!ref) return;
+    const groupToSuspend = reservations.filter(r => r.groupId === ref.groupId);
+    setSuspendedGroups(prev => [...prev, {
+      id: ref.groupId,
+      name: ref.name,
+      phone: ref.phone,
+      seats: groupToSuspend.map(r => r.seatId),
+      startTime: ref.startTime,
+      endTime: ref.endTime,
+      isPaid: ref.isPaid
+    }]);
+    await Promise.all(groupToSuspend.map(r => supabase.from('reservations').delete().eq('id', r.id)));
+    setSelectedIds([]);
+    fetchData();
   };
 
-  const handleSelection = (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    if (isCtrlPressed) {
-      setSelectedIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]);
-    } else {
-      setSelectedIds([id]);
+  const handleRestore = (group: any) => {
+    setInfoData({
+      name: group.name,
+      phone: group.phone,
+      startTime: group.startTime,
+      endTime: group.endTime,
+      selectedSeats: group.seats,
+      isPaid: group.isPaid
+    });
+    setIsModalOpen(true);
+    setSuspendedGroups(prev => prev.filter(g => g.id !== group.id));
+  };
+
+  const finalizeReservation = async (data: any) => {
+    // Critical Overlap Check
+    const overlapping = data.selectedSeats.some((sid: string) => 
+      checkOverlap(data.startTime, data.endTime, reservations.filter(r => r.seatId === sid && r.date === dateStr))
+    );
+
+    if (overlapping) {
+      alert("Seçilen saatler dolu! Lütfen kontrol ediniz.");
+      return;
     }
+
+    const gid = Math.random().toString(36).substr(2, 9);
+    await supabase.from('reservations').insert(data.selectedSeats.map((sid: string) => ({
+      group_id: gid, seat_id: sid, name: data.name, phone: data.phone,
+      start_time: data.startTime, end_time: data.endTime, is_paid: data.isPaid,
+      created_at: Date.now(), date: dateStr, user_id: session.user.id
+    })));
+    setIsModalOpen(false);
+    fetchData();
   };
 
-  const handleGroupSeatToggle = async (targetSeatId: string) => {
-    const refRes = reservations.find(r => r.id === selectedIds[0]);
-    if (!refRes) return;
-    const existingRes = reservations.find(r => r.groupId === refRes.groupId && r.date === refRes.date && r.seatId === targetSeatId);
-    if (existingRes) {
-        // Fix: Removed warning for removing last item, let user manage as they wish
-        await supabase.from('reservations').delete().eq('id', existingRes.id);
-        setSelectedIds(prev => prev.filter(id => id !== existingRes.id));
-    } else {
-        if (checkOverlap(editForm.startTime, editForm.endTime, reservations.filter(r => r.seatId === targetSeatId && r.date === dateStr))) {
-            alert("Masa dolu!"); return;
-        }
-        const { data } = await supabase.from('reservations').insert({
-            group_id: refRes.groupId, seat_id: targetSeatId, name: editForm.name || refRes.name,
-            phone: editForm.phone || refRes.phone, start_time: editForm.startTime, end_time: editForm.endTime,
-            is_paid: editForm.isPaid, created_at: Date.now(), date: dateStr, user_id: session.user.id
-        }).select();
-        if (data) setSelectedIds(prev => [...prev, data[0].id]);
+  const handleBlacklistAdd = async () => {
+    const res = reservations.find(r => r.id === selectedIds[0]);
+    if (!res) return;
+    const reason = prompt(`${res.name} kişisini kara listeye eklemek için sebep giriniz:`);
+    if (reason) {
+      await supabase.from('blacklist').insert({
+        name: res.name, phone: res.phone, reason, added_at: Date.now()
+      });
+      alert("Kişi kara listeye alındı.");
+      fetchData();
     }
   };
 
   const handleSelectGroup = () => {
-    const currentRes = reservations.find(r => r.id === selectedIds[0]);
-    if (!currentRes) return;
-    const group = reservations.filter(r => r.groupId === currentRes.groupId && r.date === currentRes.date);
-    setSelectedIds(group.map(r => r.id));
+    const res = reservations.find(r => r.id === selectedIds[0]);
+    if (res) setSelectedIds(reservations.filter(r => r.groupId === res.groupId).map(r => r.id));
   };
 
-  const handleCleanDay = async () => {
-      if(!confirm(`${dateStr} tarihindeki TÜM randevular silinecek. Emin misiniz?`)) return;
-      if(!confirm(`GERÇEKTEN EMİN MİSİNİZ? Bu işlem geri alınamaz.`)) return;
-      await supabase.from('reservations').delete().eq('date', dateStr);
-      fetchData();
-  };
+  // Fix: Added handleGroupSeatToggle to manage seat changes in group mode
+  const handleGroupSeatToggle = async (seatId: string) => {
+    if (selectedIds.length === 0) return;
+    const referenceRes = reservations.find(r => r.id === selectedIds[0]);
+    if (!referenceRes) return;
 
-  const handleCleanMonth = async () => {
-      if(!confirm(`Mevcut ayın (Bugün hariç geçmiş tüm günler) verileri temizlenecek. Emin misiniz?`)) return;
-      if(!confirm(`SON UYARI: Veriler kalıcı olarak silinecek.`)) return;
-      
-      const start = format(startOfMonth(new Date()), 'yyyy-MM-dd');
-      const today = format(new Date(), 'yyyy-MM-dd');
-      
-      await supabase.from('reservations').delete().gte('date', start).lt('date', today);
-      fetchData();
+    const isCurrentlySelected = selectedIds.some(id => reservations.find(r => r.id === id)?.seatId === seatId);
+    
+    if (isCurrentlySelected) {
+      const resToDelete = reservations.find(r => selectedIds.includes(r.id) && r.seatId === seatId);
+      if (resToDelete && selectedIds.length > 1) {
+        await supabase.from('reservations').delete().eq('id', resToDelete.id);
+        setSelectedIds(prev => prev.filter(id => id !== resToDelete.id));
+      }
+    } else {
+      const overlap = checkOverlap(referenceRes.startTime, referenceRes.endTime, reservations.filter(r => r.seatId === seatId && r.date === dateStr));
+      if (overlap) {
+        alert("Bu masa belirtilen saatlerde dolu.");
+        return;
+      }
+      const { data, error } = await supabase.from('reservations').insert({
+        group_id: referenceRes.groupId,
+        seat_id: seatId,
+        name: referenceRes.name,
+        phone: referenceRes.phone,
+        start_time: referenceRes.startTime,
+        end_time: referenceRes.endTime,
+        is_paid: referenceRes.isPaid,
+        created_at: Date.now(),
+        date: dateStr,
+        user_id: session.user.id
+      }).select();
+      if (data) setSelectedIds(prev => [...prev, data[0].id]);
+    }
+    fetchData();
   };
-
-  const finalizeReservation = async (data: any) => {
-    const gid = Math.random().toString(36).substr(2, 9);
-    await supabase.from('reservations').insert(data.selectedSeats.map((sid: string) => ({
-        group_id: gid, seat_id: sid, name: data.name, phone: data.phone,
-        start_time: data.startTime, end_time: data.endTime, is_paid: data.isPaid,
-        created_at: Date.now(), date: dateStr, user_id: session.user.id
-    })));
-    setIsModalOpen(false);
-  };
-
-  const handleLogout = async () => { await supabase.auth.signOut(); };
 
   if (authLoading) return <div className="fixed inset-0 bg-sim-black flex items-center justify-center text-sim-yellow"><Loader2 className="animate-spin" size={48}/></div>;
   if (!session) return <LoginScreen />;
-  if (showScreensaver) return <div className="fixed inset-0 z-[9999] bg-black flex items-center justify-center" onMouseMove={resetIdleTimer}><video src="/screensaver.mp4" autoPlay loop muted className="w-full h-full object-cover" /></div>;
 
   return (
-    <div className="fixed inset-0 bg-sim-black overflow-hidden flex items-center justify-center p-[5vh_5vw]">
-      <div className="w-full h-full flex bg-sim-dark border-4 border-sim-yellow rounded-xl shadow-2xl overflow-hidden relative" onClick={() => setSelectedIds([])}>
+    <div className="fixed inset-0 bg-sim-black overflow-hidden flex items-center justify-center p-[2vh_2vw]">
+      <div className={`h-full flex flex-row gap-4 transition-all duration-500 w-full`}>
         
-        <div className="flex-1 flex flex-col min-w-0 border-r border-sim-border">
+        {/* Main Application */}
+        <div className={`h-full flex flex-col bg-sim-dark border-4 rounded-xl shadow-2xl overflow-hidden relative ${mainWidthClass}`} style={{ borderColor: theme.main }} onClick={() => setSelectedIds([])}>
           <header className="flex items-center justify-between px-6 py-4 border-b border-sim-border bg-[#121212] shrink-0 z-[70]">
             <div className="flex items-center gap-8">
-                <div className="h-20 w-28 flex items-center justify-center relative group/logo cursor-pointer">
-                    <div className="absolute inset-0 bg-sim-yellow/0 rounded-full blur-2xl group-hover/logo:bg-sim-yellow/30 transition-all duration-500 scale-75 group-hover/logo:scale-110"></div>
-                    <img src="/logo.png" alt="Logo" className="w-full h-full object-contain relative z-10 transition-transform duration-500 group-hover/logo:scale-105" />
+              <div className="h-16 w-24 flex items-center justify-center relative group/logo cursor-pointer">
+                <div className="absolute inset-0 bg-sim-yellow/0 rounded-full blur-2xl group-hover/logo:bg-sim-yellow/30 transition-all duration-500 scale-75 group-hover/logo:scale-110"></div>
+                <img src="/logo.png" alt="Logo" className="w-full h-full object-contain relative z-10" />
+              </div>
+              <div className="flex items-center gap-1">
+                {/* Fix: ChevronLeft now imported */}
+                <button onClick={(e) => {e.stopPropagation(); setCurrentDate(prev => addDays(prev, -1))}} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-sim-yellow rounded-full transition-all"><ChevronLeft size={16}/></button>
+                <div onClick={(e) => {e.stopPropagation(); dateInputRef.current?.showPicker()}} className="flex flex-col items-center px-4 cursor-pointer group relative">
+                    <span className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">{format(currentDate, 'EEEE', { locale: tr })}</span>
+                    <span className="text-sm font-medium text-gray-200 tracking-tight">{format(currentDate, 'dd MMMM yyyy', { locale: tr })}</span>
+                    <input ref={dateInputRef} type="date" onChange={(e) => setCurrentDate(new Date(e.target.value))} value={dateStr} className="absolute inset-0 opacity-0 cursor-pointer pointer-events-auto" />
                 </div>
-                <div className="flex items-center gap-1">
-                    <button onClick={(e) => {e.stopPropagation(); setCurrentDate(prev => addDays(prev, -1))}} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-sim-yellow rounded-full transition-all"><ChevronLeft size={16}/></button>
-                    <div onClick={(e) => {e.stopPropagation(); dateInputRef.current?.showPicker()}} className="flex flex-col items-center px-4 cursor-pointer group relative">
-                        <span className="text-[10px] text-gray-500 uppercase font-bold tracking-widest group-hover:text-sim-yellow transition-colors">{format(currentDate, 'EEEE', { locale: tr })}</span>
-                        <span className="text-sm font-medium text-gray-200 tracking-tight">{format(currentDate, 'dd MMMM yyyy', { locale: tr })}</span>
-                        <input ref={dateInputRef} type="date" onChange={(e) => setCurrentDate(new Date(e.target.value))} value={dateStr} className="absolute inset-0 opacity-0 cursor-pointer pointer-events-auto" />
-                    </div>
-                    <button onClick={(e) => {e.stopPropagation(); setCurrentDate(prev => addDays(prev, 1))}} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-sim-yellow rounded-full transition-all"><ChevronRight size={16}/></button>
-                </div>
+                {/* Fix: ChevronRight now imported */}
+                <button onClick={(e) => {e.stopPropagation(); setCurrentDate(prev => addDays(prev, 1))}} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-sim-yellow rounded-full transition-all"><ChevronRight size={16}/></button>
+              </div>
             </div>
 
-            <div className="flex items-center gap-3 relative">
-                <button onClick={handleLogout} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg transition-colors border border-red-500/20" title="Çıkış Yap"><LogOut size={20} /></button>
-                <button onClick={(e) => {e.stopPropagation(); setIsSettingsModalOpen(true)}} className="p-2 text-sim-yellow hover:bg-sim-yellow/10 rounded-lg transition-colors border border-sim-yellow/20" title="Ayarlar"><Settings size={20} /></button>
-                <button onClick={(e) => {e.stopPropagation(); setIsBlacklistOpen(true)}} className="p-2 text-sim-yellow hover:bg-sim-yellow/10 rounded-lg transition-colors border border-sim-yellow/20" title="Kara Liste"><AlertOctagon size={20} /></button>
-                <div className="flex bg-sim-black p-1 rounded-lg border border-sim-border overflow-hidden">
-                    {simulatorGroups.map(group => (
-                        <button key={group.id} onClick={(e) => {e.stopPropagation(); setView(group.id)}} className={`px-4 py-1.5 rounded-md font-bold text-[10px] uppercase transition-all whitespace-nowrap ${view === group.id ? 'bg-sim-yellow text-black' : 'text-gray-500 hover:text-gray-300'}`}>{group.name}</button>
-                    ))}
-                </div>
-                <button onClick={(e) => {e.stopPropagation(); setIsModalOpen(true)}} className="bg-sim-yellow text-black px-5 py-2 rounded-lg font-black text-[11px] uppercase shadow-lg shadow-yellow-500/10 hover:brightness-110 flex items-center gap-2"><Plus size={14}/> Yeni</button>
+            <div className="flex items-center gap-3">
+              <button onClick={() => setIsSettingsModalOpen(true)} className="p-2 text-sim-yellow hover:bg-sim-yellow/10 rounded-lg transition-colors border border-sim-yellow/20"><Settings size={20} /></button>
+              <button onClick={() => setIsBlacklistOpen(true)} className="p-2 text-sim-yellow hover:bg-sim-yellow/10 rounded-lg transition-colors border border-sim-yellow/20"><AlertOctagon size={20} /></button>
+              <div className="flex bg-sim-black p-1 rounded-lg border border-sim-border overflow-hidden">
+                  {simulatorGroups.map(g => (
+                      <button key={g.id} onClick={(e) => {e.stopPropagation(); setView(g.id)}} className={`px-4 py-1.5 rounded-md font-bold text-[10px] uppercase transition-all whitespace-nowrap ${view === g.id ? 'bg-sim-yellow text-black' : 'text-gray-500 hover:text-gray-300'}`}>{g.name}</button>
+                  ))}
+              </div>
+              <button onClick={() => setIsModalOpen(true)} className="bg-sim-yellow text-black px-5 py-2 rounded-lg font-black text-[11px] uppercase flex items-center gap-2 shadow-lg shadow-yellow-500/10"><Plus size={14}/> Yeni</button>
             </div>
           </header>
 
           <div className="flex-1 overflow-auto relative bg-sim-black">
-             <div className="flex relative" style={{ height: totalContentHeight }}>
+             <div className="flex relative" style={{ height: (endHour - START_HOUR) * HOUR_HEIGHT + HEADER_HEIGHT }}>
+                 
+                 {/* Timeline Indicator with Clock */}
+                 {isSameDay(currentDate, now) && (
+                   <div className="absolute left-0 right-0 border-b-2 z-[60] pointer-events-none transition-all duration-1000" style={{ 
+                     top: 40 + (((now.getHours() * 60 + now.getMinutes()) - START_HOUR * 60) / ((endHour - START_HOUR) * 60)) * ((endHour - START_HOUR) * HOUR_HEIGHT),
+                     borderColor: theme.timeline
+                   }}>
+                     <div className="absolute bottom-0 right-2 bg-sim-yellow text-black text-[10px] font-black px-2 py-1 rounded shadow-lg flex items-center gap-1">
+                        <Clock size={10} /> {format(now, 'HH:mm:ss')}
+                     </div>
+                   </div>
+                 )}
+
                  <div className="w-14 shrink-0 bg-sim-dark border-r border-sim-border sticky left-0 z-[65] flex flex-col">
                     <div className="h-[40px] border-b border-sim-yellow flex items-center justify-center font-bold text-[8px] text-sim-yellow uppercase sticky top-0 bg-sim-dark z-10">TIME</div>
                     <div className="flex-1">
-                        {Array.from({ length: totalHours }).map((_, i) => (
+                        {Array.from({ length: endHour - START_HOUR }).map((_, i) => (
                             <div key={i} className="border-b border-sim-border/10 flex items-center justify-center font-mono text-gray-600 text-[10px]" style={{ height: HOUR_HEIGHT }}>
                                 <span>{`${(START_HOUR + i) % 24}:00`.padStart(5, '0')}</span>
                             </div>
@@ -368,27 +346,15 @@ export default function App() {
                  </div>
 
                  <div className="flex-1 flex min-w-[800px] relative">
-                    {isSameDay(currentDate, now) && (
-                      <div className="absolute left-0 right-0 bg-sim-yellow/15 border-b-2 border-sim-yellow/60 pointer-events-none z-[50] transition-all duration-1000" style={{ top: 40, height: `${Math.max(0, (((now.getHours() * 60 + now.getMinutes()) - START_HOUR * 60) / (totalHours * 60)) * 100)}%`, maxHeight: `calc(100% - 40px)` }}>
-                         <div className="absolute bottom-0 right-2 bg-sim-yellow text-black text-[8px] font-black px-1.5 py-0.5 rounded shadow-[0_0_10px_rgba(251,191,36,0.5)]">ŞUAN</div>
-                      </div>
-                    )}
-
                     {currentViewSeats.map((seat) => (
                         <div key={seat.id} className="flex-1 border-r border-sim-border/20 relative flex flex-col">
-                            <div className="h-[40px] border-b border-sim-yellow bg-sim-black/80 sticky top-0 z-[60] flex items-center justify-center font-bold text-sim-yellow text-[10px] tracking-widest uppercase backdrop-blur-md">{seat.label}</div>
+                            <div className="h-[40px] border-b border-sim-yellow bg-sim-black/80 sticky top-0 z-[60] flex items-center justify-center font-bold text-sim-yellow text-[10px] tracking-widest uppercase">{seat.label}</div>
                             <div className="relative flex-1 w-full" onDragOver={(e) => handleDragOver(e, seat.id)} onDrop={(e) => handleDrop(e, seat.id)}>
-                                <div className="absolute inset-0 z-10 cursor-default" onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); const y = e.clientY - e.currentTarget.getBoundingClientRect().top; const t = minutesToTime(Math.floor(((START_HOUR * 60) + (y / HOUR_HEIGHT * 60)) / 30) * 30); setContextMenu({ visible: true, x: e.pageX, y: e.pageY, seatId: seat.id, time: t }); }} />
+                                <div className="absolute inset-0 z-10 cursor-default" onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); const y = e.clientY - e.currentTarget.getBoundingClientRect().top; setContextMenu({ visible: true, x: e.pageX, y: e.pageY, seatId: seat.id, time: minutesToTime(Math.floor(((START_HOUR * 60) + (y / HOUR_HEIGHT * 60)) / 30) * 30) }); }} />
                                 
-                                {/* Drag Target Ghosting - Improved Visibility */}
-                                {dragTarget && dragTarget.seatId === seat.id && (
-                                  <div 
-                                    className={`absolute left-0 right-0 z-[80] border-4 border-dashed transition-all duration-75 shadow-[0_0_30px_rgba(34,197,94,0.3)] ${dragTarget.isValid ? 'bg-green-500/30 border-green-400' : 'bg-red-500/30 border-red-400'}`}
-                                    style={getGridPosition(dragTarget.startTime, dragTarget.endTime, START_HOUR, endHour)}
-                                  >
-                                    <div className="flex h-full items-center justify-center text-xl font-black text-green-400 drop-shadow-[0_0_10px_rgba(34,197,94,1)] tracking-tighter">
-                                        {dragTarget.startTime} - {dragTarget.endTime}
-                                    </div>
+                                {dragTarget?.seatId === seat.id && (
+                                  <div className="absolute left-0 right-0 z-[80] border-4 border-dashed bg-green-500/30 border-green-400 shadow-2xl flex items-center justify-center text-2xl font-black text-green-400" style={getGridPosition(dragTarget.startTime, dragTarget.endTime, START_HOUR, endHour)}>
+                                    {dragTarget.startTime} - {dragTarget.endTime}
                                   </div>
                                 )}
 
@@ -399,28 +365,33 @@ export default function App() {
                                     const resStartMins = timeToMinutes(res.startTime);
                                     const resEndMins = timeToMinutes(res.endTime);
                                     
-                                    const isCurrentDate = isSameDay(currentDate, now);
-                                    const isPast = (resEndMins < currentTimeMins && isCurrentDate) || (currentDate < now && !isCurrentDate);
-                                    const isActive = isCurrentDate && currentTimeMins >= resStartMins && currentTimeMins <= resEndMins;
-                                    const isFuture = !isPast && !isActive;
-
-                                    let bgColor = isFuture ? 'bg-sim-gray border-sim-border text-gray-400' : (res.isPaid ? 'bg-emerald-600 border-emerald-500' : 'bg-red-600 border-red-500');
-                                    if(isPast) bgColor = 'bg-sim-yellow/20 border-sim-yellow/40 text-sim-yellow/60';
+                                    const isCurrent = isSameDay(currentDate, now);
+                                    const isPast = (resEndMins < currentTimeMins && isCurrent) || (currentDate < now && !isCurrent);
+                                    const isActive = isCurrent && currentTimeMins >= resStartMins && currentTimeMins <= resEndMins;
+                                    
+                                    let styleKey = 'future';
+                                    if (isPast) styleKey = 'past';
+                                    else if (isActive) styleKey = 'active';
+                                    
+                                    const colorKey = `${styleKey}${res.isPaid ? 'Paid' : 'Unpaid'}` as keyof typeof theme;
+                                    const color = theme[colorKey] as string;
 
                                     return (
                                         <div 
-                                          key={res.id} 
-                                          draggable={!isCtrlPressed} 
-                                          onDragStart={(e) => handleDragStart(e, res.id)} 
-                                          onDragEnd={handleDragEnd}
-                                          onClick={(e) => handleSelection(e, res.id)} 
+                                          key={res.id} draggable={!isCtrlPressed} onDragStart={(e) => handleDragStart(e, res.id)} 
+                                          onDragEnd={(e) => (e.target as HTMLElement).style.opacity = '1'}
+                                          onClick={(e) => { e.stopPropagation(); if(isCtrlPressed) { setSelectedIds(p => p.includes(res.id) ? p.filter(i => i !== res.id) : [...p, res.id]); } else { setSelectedIds([res.id]); } }} 
                                           onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ visible: true, x: e.pageX, y: e.pageY, reservationId: res.id }); }}
-                                          className={`absolute left-0 right-0 rounded-sm overflow-hidden flex flex-col justify-center text-center p-1 transition-all border z-[50] ${selected ? 'ring-4 ring-white z-[90] shadow-[0_0_30px_rgba(255,255,255,0.4)] brightness-110' : ''} ${bgColor} ${isActive && !res.isPaid ? 'animate-pulse' : ''} cursor-grab active:cursor-grabbing active:z-[100]`}
-                                          style={{ top: pos.top, height: pos.height }}
+                                          className={`absolute left-0 right-0 rounded-sm overflow-hidden flex flex-col justify-center text-center p-1 transition-all border z-[50] ${selected ? 'ring-4 ring-white z-[90] shadow-2xl' : ''} ${isActive && !res.isPaid ? 'animate-pulse' : ''}`}
+                                          style={{ top: pos.top, height: pos.height, backgroundColor: color, borderColor: selected ? '#fff' : theme.border, opacity: theme.opacity }}
                                         >
-                                            {res.isPaid && <div className="absolute top-1 right-1 bg-white/20 rounded-full p-0.5"><Check size={8} className="text-white" /></div>}
-                                            <div className="text-[10px] font-bold opacity-90 leading-none mb-0.5">{res.startTime}-{res.endTime}</div>
-                                            <div className="font-black text-[12px] truncate uppercase px-1 tracking-tight">{res.name}</div>
+                                            <div className="text-[9px] font-black opacity-90 leading-none mb-0.5">{res.startTime}-{res.endTime}</div>
+                                            <div className="font-black text-[11px] truncate uppercase px-1">{res.name}</div>
+                                            {isActive && (
+                                              <div className="text-[8px] font-bold mt-1 bg-black/30 rounded inline-block px-1 mx-auto">
+                                                {resEndMins - currentTimeMins > 0 ? `${resEndMins - currentTimeMins}dk kaldı` : 'Süre Doldu'}
+                                              </div>
+                                            )}
                                         </div>
                                     );
                                 })}
@@ -432,73 +403,80 @@ export default function App() {
           </div>
         </div>
 
-        <aside className="w-[320px] bg-sim-dark/50 backdrop-blur-xl flex flex-col shrink-0 border-l border-sim-border z-[70]" onClick={(e) => e.stopPropagation()}>
+        {/* Suspension Sidebar */}
+        {suspendedGroups.length > 0 && (
+          <aside className="w-[20%] bg-sim-dark border-4 border-sim-yellow/30 rounded-xl p-4 overflow-y-auto space-y-4 animate-in slide-in-from-right duration-300">
+             <div className="flex items-center gap-2 text-sim-yellow font-black uppercase text-xs border-b border-sim-border pb-2">
+                <PauseCircle size={16}/> Askıdaki Kayıtlar ({suspendedGroups.length})
+             </div>
+             {suspendedGroups.map(g => (
+               <div key={g.id} className="bg-sim-black border border-sim-border rounded-lg p-3 group relative transition-all hover:border-sim-yellow">
+                  <div className="text-sm font-black text-white uppercase">{g.name}</div>
+                  <div className="text-[10px] text-sim-yellow font-mono">{g.phone}</div>
+                  <div className="text-[9px] text-gray-500 mt-2">{g.seats.join(', ')} | {g.startTime}-{g.endTime}</div>
+                  <div className="absolute inset-0 bg-sim-yellow/10 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all rounded-lg backdrop-blur-[2px]">
+                     <button onClick={() => handleRestore(g)} className="bg-sim-yellow text-black font-black px-4 py-2 rounded text-[10px] uppercase flex items-center gap-2">
+                        <PlayCircle size={14}/> Yerleştir
+                     </button>
+                  </div>
+               </div>
+             ))}
+          </aside>
+        )}
+
+        {/* Edit Panel (Sidebar) */}
+        <aside className="w-[320px] bg-sim-dark/80 backdrop-blur-xl flex flex-col shrink-0 border-l border-sim-border z-[70] transition-all" onClick={(e) => e.stopPropagation()}>
           <div className="p-5 border-b border-sim-border bg-sim-black/20 flex items-center justify-between">
             <div className="flex items-center gap-3 text-sim-yellow font-black text-xs tracking-widest uppercase"><Edit3 size={16}/> Düzenle</div>
-            {selectedIds.length > 0 && <span className="bg-sim-yellow text-black text-[9px] font-black px-2 py-0.5 rounded-full shadow-[0_0_10px_rgba(251,191,36,0.4)]">{selectedIds.length} SEÇİLİ</span>}
+            <div className={`text-[9px] font-black px-2 py-1 rounded border ${isGroupMode ? 'border-green-500 text-green-500 bg-green-500/10' : 'border-gray-500 text-gray-500'}`}>
+                {isGroupMode ? 'GRUP MODU' : 'TEKLİ MOD'}
+            </div>
           </div>
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
             {selectedIds.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center opacity-10 text-center space-y-4"><MousePointer2 size={64} strokeWidth={1} /><p className="text-[10px] font-bold uppercase tracking-widest px-8">İşlem yapmak için takvimden bir kayıt seçin</p></div>
             ) : (
-              <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-                  <button onClick={handleSelectGroup} className="w-full bg-sim-yellow/10 border border-sim-yellow text-sim-yellow font-black py-3 rounded-xl text-[10px] uppercase flex items-center justify-center gap-2 hover:bg-sim-yellow hover:text-black transition-all"><MousePointerSquareDashed size={14} /> Tüm Grubu Seç</button>
-                  <div className="space-y-4">
-                    <div className="space-y-1.5"><label className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Müşteri</label><input type="text" value={editForm.name} onChange={(e) => setEditForm({...editForm, name: e.target.value.toUpperCase()})} className="w-full bg-sim-black border border-sim-border rounded-lg p-3 text-xs text-white uppercase outline-none focus:border-sim-yellow transition-all" placeholder="AD SOYAD" /></div>
-                    <div className="space-y-1.5"><label className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Telefon</label><input type="text" value={editForm.phone} onChange={(e) => setEditForm({...editForm, phone: formatPhoneNumber(e.target.value)})} className="w-full bg-sim-black border border-sim-border rounded-lg p-3 text-xs text-white outline-none focus:border-sim-yellow transition-all" placeholder="5XX XXX XX XX" /></div>
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-1.5"><label className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Başlangıç</label><input type="time" value={editForm.startTime} onChange={(e) => setEditForm({...editForm, startTime: e.target.value})} className="w-full bg-sim-black border border-sim-border rounded-lg p-3 text-xs text-white outline-none" /></div>
-                        <div className="space-y-1.5"><label className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Bitiş</label><input type="time" value={editForm.endTime} onChange={(e) => setEditForm({...editForm, endTime: e.target.value})} className="w-full bg-sim-black border border-sim-border rounded-lg p-3 text-xs text-white outline-none" /></div>
-                    </div>
+              <div className="space-y-6">
+                  <div className="space-y-2">
+                    <button onClick={handleSelectGroup} className="w-full bg-sim-yellow/10 border border-sim-yellow text-sim-yellow font-black py-3 rounded-xl text-[10px] uppercase flex items-center justify-center gap-2 hover:bg-sim-yellow hover:text-black transition-all">Tüm Grubu Seç</button>
+                    {isGroupMode && (
+                       <button onClick={handleSuspend} className="w-full bg-blue-500/10 border border-blue-500 text-blue-500 font-black py-3 rounded-xl text-[10px] uppercase flex items-center justify-center gap-2 hover:bg-blue-500 hover:text-white transition-all">
+                          <PauseCircle size={14}/> Askıya Al
+                       </button>
+                    )}
+                  </div>
+                  
+                  <div className="space-y-4 pt-4 border-t border-sim-border">
+                    <div className="space-y-1.5"><label className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Müşteri</label><input type="text" value={editForm.name} onChange={(e) => setEditForm({...editForm, name: e.target.value.toUpperCase()})} className="w-full bg-sim-black border border-sim-border rounded-lg p-3 text-xs text-white uppercase outline-none focus:border-sim-yellow" /></div>
+                    <div className="space-y-1.5"><label className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Telefon</label><input type="text" value={editForm.phone} onChange={(e) => setEditForm({...editForm, phone: formatPhoneNumber(e.target.value)})} className="w-full bg-sim-black border border-sim-border rounded-lg p-3 text-xs text-white outline-none focus:border-sim-yellow" /></div>
+                    
                     <div className="space-y-2">
-                        <div className="flex items-center justify-between mb-1.5"><label className={`text-[9px] font-black uppercase tracking-widest flex items-center gap-1 ${isGroupMode ? 'text-green-500' : 'text-gray-500'}`}>{isGroupMode ? <CheckCircle2 size={10}/> : <Repeat size={10}/>} {isGroupMode ? "GRUP MODU: AKTİF" : "MASA DEĞİŞTİRME"}</label><button onClick={() => setIsGroupMode(!isGroupMode)} className={`text-[8px] font-bold px-2 py-1 rounded border transition-all ${isGroupMode ? 'bg-green-600 text-white border-green-500 shadow-lg shadow-green-500/20' : 'bg-sim-dark text-gray-400 border-sim-border hover:text-white'}`}>{isGroupMode ? "MOD: GRUP" : "MOD: TEK"}</button></div>
-                        <div className={`grid grid-cols-4 gap-2 p-3 rounded-xl border-2 transition-all duration-300 ${isGroupMode ? 'bg-green-950/20 border-green-500' : 'bg-sim-black border-sim-border'}`}>
-                            {currentViewSeats.map(s => {
+                        <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Masa Değiştir/Ekle (Tüm Masalar)</label>
+                        <div className="grid grid-cols-4 gap-2 p-3 bg-sim-black rounded-xl border border-sim-border max-h-[200px] overflow-y-auto">
+                            {allSeats.map(s => {
                                 const isSel = selectedIds.some(id => reservations.find(r => r.id === id)?.seatId === s.id);
-                                return <button key={s.id} onClick={() => isGroupMode ? handleGroupSeatToggle(s.id) : setEditForm({...editForm, seatId: s.id})} className={`p-2 text-[8px] font-black rounded border transition-all ${isSel ? 'bg-sim-yellow text-black border-sim-yellow shadow-lg shadow-yellow-500/20' : 'bg-sim-gray text-gray-400 border-sim-border hover:border-gray-500'}`}>{s.label}</button>
+                                return <button key={s.id} onClick={() => isGroupMode ? handleGroupSeatToggle(s.id) : setEditForm({...editForm, seatId: s.id})} className={`p-2 text-[8px] font-black rounded border transition-all ${isSel ? 'bg-sim-yellow text-black border-sim-yellow shadow-lg' : 'bg-sim-gray text-gray-400 border-sim-border'}`}>{s.label}</button>
                             })}
                         </div>
                     </div>
-                    <div className="space-y-1.5">
-                        <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Ödeme Durumu</label>
-                        <div className="flex bg-sim-black p-1 rounded-xl border border-sim-border">
-                            <button onClick={() => setEditForm({...editForm, isPaid: true})} className={`flex-1 py-3 text-[10px] font-black rounded-lg transition-all ${editForm.isPaid ? 'bg-green-600 text-white shadow-lg shadow-green-500/20' : 'text-gray-600'}`}>ALINDI</button>
-                            <button onClick={() => setEditForm({...editForm, isPaid: false})} className={`flex-1 py-3 text-[10px] font-black rounded-lg transition-all ${!editForm.isPaid ? 'bg-red-900 text-white shadow-lg shadow-red-900/20' : 'text-gray-600'}`}>ALINMADI</button>
-                        </div>
-                    </div>
-                  </div>
-                  <div className="flex flex-col gap-3 pt-6 border-t border-sim-border">
-                    <button onClick={handleSaveEdit} className="w-full bg-sim-yellow text-black font-black py-4 rounded-xl text-[11px] uppercase flex items-center justify-center gap-2 shadow-lg shadow-yellow-500/20 hover:scale-[1.02] active:scale-95 transition-all"><Save size={16} /> Güncelle</button>
-                    <button onClick={async () => { if(confirm('Sil?')) { await Promise.all(selectedIds.map(id => supabase.from('reservations').delete().eq('id', id))); setSelectedIds([]); } }} className="w-full bg-transparent border border-red-900/50 text-red-700 font-black py-3 rounded-xl text-[10px] uppercase hover:bg-red-950/20 transition-all">Sil</button>
+                    
+                    <button onClick={handleBlacklistAdd} className="w-full bg-red-500/10 border border-red-500 text-red-500 font-black py-3 rounded-xl text-[10px] uppercase flex items-center justify-center gap-2 hover:bg-red-500 hover:text-white transition-all">Kara Listeye Ekle</button>
+                    <button onClick={async () => { if(confirm('Sil?')) { await Promise.all(selectedIds.map(id => supabase.from('reservations').delete().eq('id', id))); setSelectedIds([]); fetchData(); } }} className="w-full bg-transparent border border-red-900/50 text-red-700 font-black py-3 rounded-xl text-[10px] uppercase hover:bg-red-950/20 transition-all">Kayıt Sil</button>
                   </div>
               </div>
             )}
           </div>
         </aside>
 
-        <ReservationModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={finalizeReservation} availableSeats={seatsList} view={view} simulatorGroups={simulatorGroups} />
+        <ReservationModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={finalizeReservation} availableSeats={allSeats} view={view} simulatorGroups={simulatorGroups} initialData={infoData} />
         <BlacklistModal isOpen={isBlacklistOpen} onClose={() => setIsBlacklistOpen(false)} blacklist={blacklist} onUpdate={fetchData} />
-        <SettingsModal 
-            isOpen={isSettingsModalOpen} 
-            onClose={() => setIsSettingsModalOpen(false)} 
-            groups={simulatorGroups} 
-            onUpdateGroups={setSimulatorGroups} 
-            endHour={endHour} 
-            onUpdateEndHour={setEndHour} 
-            seatLabelPrefix={seatLabelPrefix} 
-            onUpdatePrefix={setSeatLabelPrefix}
-            onCleanDay={handleCleanDay}
-            onCleanMonth={handleCleanMonth}
-        />
+        <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} groups={simulatorGroups} onUpdateGroups={setSimulatorGroups} endHour={endHour} onUpdateEndHour={setEndHour} seatLabelPrefix={seatLabelPrefix} onUpdatePrefix={setSeatLabelPrefix} theme={theme} onUpdateTheme={setTheme} />
         <InfoModal data={infoData} onClose={() => { setIsInfoOpen(false); setInfoData(null); }} />
         {contextMenu.visible && <ContextMenu {...contextMenu} onClose={() => setContextMenu({...contextMenu, visible: false})} onAction={async (action) => {
              if (action === 'CREATE_NEW') setIsModalOpen(true);
              if (action === 'SHOW_INFO') { 
                 const r = reservations.find(res => res.id === contextMenu.reservationId); 
-                if(r) { 
-                    setInfoData({...r, seats: reservations.filter(res => res.groupId === r.groupId).map(res => res.seatId)}); 
-                    setIsInfoOpen(true); 
-                } 
+                if(r) { setInfoData({...r, seats: reservations.filter(res => res.groupId === r.groupId).map(res => res.seatId)}); setIsInfoOpen(true); }
              }
              setContextMenu({...contextMenu, visible: false});
         }} type={contextMenu.reservationId ? 'RESERVATION' : 'EMPTY'} />}
@@ -517,39 +495,25 @@ function LoginScreen() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
-        setError('');
         const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) setError('Giriş başarısız.');
+        if (error) alert('Hatalı giriş.');
         setLoading(false);
     };
     return (
         <div className="fixed inset-0 bg-sim-black flex items-center justify-center p-4">
-            <div className="w-full max-w-[400px] bg-sim-dark border border-sim-yellow/30 p-10 rounded-2xl shadow-2xl relative overflow-hidden transition-all">
-                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-sim-yellow to-transparent"></div>
-                <div className="flex flex-col items-center mb-8 group/logo cursor-pointer relative">
-                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32 bg-sim-yellow/0 rounded-full blur-2xl group-hover/logo:bg-sim-yellow/30 transition-all duration-500 scale-75 group-hover/logo:scale-125"></div>
-                    <img src="/logo.png" alt="Logo" className="h-24 mb-4 object-contain relative z-10 transition-transform duration-500 group-hover/logo:scale-110" />
-                    <h2 className="text-sim-yellow font-black text-xs tracking-[0.3em] uppercase opacity-80 relative z-10">SimRacing Manager</h2>
+            <div className="w-full max-w-[400px] bg-sim-dark border border-sim-yellow/30 p-10 rounded-2xl shadow-2xl relative">
+                <div className="flex flex-col items-center mb-8">
+                    <img src="/logo.png" alt="Logo" className="h-24 mb-4 object-contain" />
+                    <h2 className="text-sim-yellow font-black text-xs tracking-widest uppercase">SimRacing Manager</h2>
                 </div>
-                <form onSubmit={handleLogin} className="space-y-6 relative z-10">
-                    <div className="space-y-2">
-                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2"><Mail size={12}/> E-Posta</label>
-                        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="w-full bg-sim-black border border-sim-border rounded-xl p-4 text-sm text-white outline-none focus:border-sim-yellow transition-all" />
-                    </div>
-                    <div className="space-y-2">
-                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2"><Lock size={12}/> Şifre</label>
-                        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required className="w-full bg-sim-black border border-sim-border rounded-xl p-4 text-sm text-white outline-none focus:border-sim-yellow transition-all" />
-                    </div>
-                    {error && <div className="text-red-500 text-[10px] font-bold text-center uppercase tracking-wider bg-red-500/10 p-2 rounded-lg border border-red-500/20">{error}</div>}
-                    <button type="submit" disabled={loading} className="w-full bg-sim-yellow text-black font-black py-4 rounded-xl text-xs uppercase hover:brightness-110 transition-all flex items-center justify-center gap-2 shadow-lg shadow-yellow-500/20">
-                        {loading ? <Loader2 className="animate-spin" size={18}/> : 'Giriş Yap'}
-                    </button>
+                <form onSubmit={handleLogin} className="space-y-6">
+                    <div className="space-y-2"><label className="text-[10px] font-bold text-gray-500 uppercase">E-Posta</label><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="w-full bg-sim-black border border-sim-border rounded-xl p-4 text-white outline-none focus:border-sim-yellow" /></div>
+                    <div className="space-y-2"><label className="text-[10px] font-bold text-gray-500 uppercase">Şifre</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required className="w-full bg-sim-black border border-sim-border rounded-xl p-4 text-white outline-none focus:border-sim-yellow" /></div>
+                    <button type="submit" disabled={loading} className="w-full bg-sim-yellow text-black font-black py-4 rounded-xl text-xs uppercase shadow-lg shadow-yellow-500/20">{loading ? 'Giriş Yapılıyor...' : 'Giriş Yap'}</button>
                 </form>
-                <div className="mt-8 text-center relative z-10"><p className="text-[8px] text-gray-600 font-bold uppercase tracking-widest">© 2024 SIMRACING MANAGEMENT SYSTEM</p></div>
             </div>
         </div>
     );
