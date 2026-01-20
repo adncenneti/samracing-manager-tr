@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { format, addDays, isSameDay, startOfMonth } from 'date-fns';
+import { format, addDays, isSameDay, startOfMonth, endOfDay } from 'date-fns';
 import { tr } from 'date-fns/locale';
 import { 
   Plus, Trash, Save, Edit3, MousePointer2, AlertOctagon, Settings, 
@@ -69,9 +69,7 @@ export default function App() {
   const dateInputRef = useRef<HTMLInputElement>(null);
   const dateStr = format(currentDate, 'yyyy-MM-dd');
   const [editForm, setEditForm] = useState({ name: '', phone: '', startTime: '', endTime: '', isPaid: false, seatId: '' });
-  const [activeEditingIds, setActiveEditingIds] = useState<string[]>([]);
 
-  // Automatic Group Mode Logic
   const isGroupMode = useMemo(() => selectedIds.length > 1, [selectedIds]);
 
   useEffect(() => {
@@ -108,7 +106,7 @@ export default function App() {
   useEffect(() => {
     if (!session) return;
     fetchData();
-    const interval = setInterval(() => setNow(new Date()), 1000); // 1s interval for clock sync
+    const interval = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(interval);
   }, [session, fetchData]);
 
@@ -123,7 +121,6 @@ export default function App() {
     };
   }, []);
 
-  // Sidebar Layout Switch
   const mainWidthClass = suspendedGroups.length > 0 ? 'w-[80%]' : 'w-full';
 
   const allSeats = useMemo(() => {
@@ -169,6 +166,7 @@ export default function App() {
     }
     setDraggedResId(null);
     setDragTarget(null);
+    fetchData();
   };
 
   const handleSuspend = async () => {
@@ -204,16 +202,13 @@ export default function App() {
   };
 
   const finalizeReservation = async (data: any) => {
-    // Critical Overlap Check
     const overlapping = data.selectedSeats.some((sid: string) => 
       checkOverlap(data.startTime, data.endTime, reservations.filter(r => r.seatId === sid && r.date === dateStr))
     );
-
     if (overlapping) {
       alert("Seçilen saatler dolu! Lütfen kontrol ediniz.");
       return;
     }
-
     const gid = Math.random().toString(36).substr(2, 9);
     await supabase.from('reservations').insert(data.selectedSeats.map((sid: string) => ({
       group_id: gid, seat_id: sid, name: data.name, phone: data.phone,
@@ -242,14 +237,11 @@ export default function App() {
     if (res) setSelectedIds(reservations.filter(r => r.groupId === res.groupId).map(r => r.id));
   };
 
-  // Fix: Added handleGroupSeatToggle to manage seat changes in group mode
   const handleGroupSeatToggle = async (seatId: string) => {
     if (selectedIds.length === 0) return;
     const referenceRes = reservations.find(r => r.id === selectedIds[0]);
     if (!referenceRes) return;
-
     const isCurrentlySelected = selectedIds.some(id => reservations.find(r => r.id === id)?.seatId === seatId);
-    
     if (isCurrentlySelected) {
       const resToDelete = reservations.find(r => selectedIds.includes(r.id) && r.seatId === seatId);
       if (resToDelete && selectedIds.length > 1) {
@@ -258,24 +250,29 @@ export default function App() {
       }
     } else {
       const overlap = checkOverlap(referenceRes.startTime, referenceRes.endTime, reservations.filter(r => r.seatId === seatId && r.date === dateStr));
-      if (overlap) {
-        alert("Bu masa belirtilen saatlerde dolu.");
-        return;
-      }
-      const { data, error } = await supabase.from('reservations').insert({
-        group_id: referenceRes.groupId,
-        seat_id: seatId,
-        name: referenceRes.name,
-        phone: referenceRes.phone,
-        start_time: referenceRes.startTime,
-        end_time: referenceRes.endTime,
-        is_paid: referenceRes.isPaid,
-        created_at: Date.now(),
-        date: dateStr,
-        user_id: session.user.id
+      if (overlap) { alert("Bu masa belirtilen saatlerde dolu."); return; }
+      const { data } = await supabase.from('reservations').insert({
+        group_id: referenceRes.groupId, seat_id: seatId, name: referenceRes.name, phone: referenceRes.phone,
+        start_time: referenceRes.startTime, end_time: referenceRes.endTime, is_paid: referenceRes.isPaid,
+        created_at: Date.now(), date: dateStr, user_id: session.user.id
       }).select();
       if (data) setSelectedIds(prev => [...prev, data[0].id]);
     }
+    fetchData();
+  };
+
+  // Fixed missing onCleanDay and onCleanMonth props for SettingsModal
+  const handleCleanDay = async () => {
+    if (!confirm(`${format(currentDate, 'dd MMMM yyyy', { locale: tr })} tarihindeki tüm kayıtları silmek istediğinize emin misiniz?`)) return;
+    await supabase.from('reservations').delete().eq('date', dateStr);
+    fetchData();
+  };
+
+  const handleCleanMonth = async () => {
+    if (!confirm(`Bu ay içindeki geçmiş tüm kayıtları silmek istediğinize emin misiniz?`)) return;
+    const monthStart = format(startOfMonth(new Date()), 'yyyy-MM-dd');
+    const yesterday = format(addDays(new Date(), -1), 'yyyy-MM-dd');
+    await supabase.from('reservations').delete().gte('date', monthStart).lte('date', yesterday);
     fetchData();
   };
 
@@ -285,28 +282,23 @@ export default function App() {
   return (
     <div className="fixed inset-0 bg-sim-black overflow-hidden flex items-center justify-center p-[2vh_2vw]">
       <div className={`h-full flex flex-row gap-4 transition-all duration-500 w-full`}>
-        
-        {/* Main Application */}
         <div className={`h-full flex flex-col bg-sim-dark border-4 rounded-xl shadow-2xl overflow-hidden relative ${mainWidthClass}`} style={{ borderColor: theme.main }} onClick={() => setSelectedIds([])}>
           <header className="flex items-center justify-between px-6 py-4 border-b border-sim-border bg-[#121212] shrink-0 z-[70]">
             <div className="flex items-center gap-8">
               <div className="h-16 w-24 flex items-center justify-center relative group/logo cursor-pointer">
                 <div className="absolute inset-0 bg-sim-yellow/0 rounded-full blur-2xl group-hover/logo:bg-sim-yellow/30 transition-all duration-500 scale-75 group-hover/logo:scale-110"></div>
-                <img src="/logo.png" alt="Logo" className="w-full h-full object-contain relative z-10" />
+                <img src="logo.png" alt="Logo" className="w-full h-full object-contain relative z-10" />
               </div>
               <div className="flex items-center gap-1">
-                {/* Fix: ChevronLeft now imported */}
                 <button onClick={(e) => {e.stopPropagation(); setCurrentDate(prev => addDays(prev, -1))}} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-sim-yellow rounded-full transition-all"><ChevronLeft size={16}/></button>
                 <div onClick={(e) => {e.stopPropagation(); dateInputRef.current?.showPicker()}} className="flex flex-col items-center px-4 cursor-pointer group relative">
                     <span className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">{format(currentDate, 'EEEE', { locale: tr })}</span>
                     <span className="text-sm font-medium text-gray-200 tracking-tight">{format(currentDate, 'dd MMMM yyyy', { locale: tr })}</span>
                     <input ref={dateInputRef} type="date" onChange={(e) => setCurrentDate(new Date(e.target.value))} value={dateStr} className="absolute inset-0 opacity-0 cursor-pointer pointer-events-auto" />
                 </div>
-                {/* Fix: ChevronRight now imported */}
                 <button onClick={(e) => {e.stopPropagation(); setCurrentDate(prev => addDays(prev, 1))}} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-sim-yellow rounded-full transition-all"><ChevronRight size={16}/></button>
               </div>
             </div>
-
             <div className="flex items-center gap-3">
               <button onClick={() => setIsSettingsModalOpen(true)} className="p-2 text-sim-yellow hover:bg-sim-yellow/10 rounded-lg transition-colors border border-sim-yellow/20"><Settings size={20} /></button>
               <button onClick={() => setIsBlacklistOpen(true)} className="p-2 text-sim-yellow hover:bg-sim-yellow/10 rounded-lg transition-colors border border-sim-yellow/20"><AlertOctagon size={20} /></button>
@@ -318,11 +310,8 @@ export default function App() {
               <button onClick={() => setIsModalOpen(true)} className="bg-sim-yellow text-black px-5 py-2 rounded-lg font-black text-[11px] uppercase flex items-center gap-2 shadow-lg shadow-yellow-500/10"><Plus size={14}/> Yeni</button>
             </div>
           </header>
-
           <div className="flex-1 overflow-auto relative bg-sim-black">
              <div className="flex relative" style={{ height: (endHour - START_HOUR) * HOUR_HEIGHT + HEADER_HEIGHT }}>
-                 
-                 {/* Timeline Indicator with Clock */}
                  {isSameDay(currentDate, now) && (
                    <div className="absolute left-0 right-0 border-b-2 z-[60] pointer-events-none transition-all duration-1000" style={{ 
                      top: 40 + (((now.getHours() * 60 + now.getMinutes()) - START_HOUR * 60) / ((endHour - START_HOUR) * 60)) * ((endHour - START_HOUR) * HOUR_HEIGHT),
@@ -333,7 +322,6 @@ export default function App() {
                      </div>
                    </div>
                  )}
-
                  <div className="w-14 shrink-0 bg-sim-dark border-r border-sim-border sticky left-0 z-[65] flex flex-col">
                     <div className="h-[40px] border-b border-sim-yellow flex items-center justify-center font-bold text-[8px] text-sim-yellow uppercase sticky top-0 bg-sim-dark z-10">TIME</div>
                     <div className="flex-1">
@@ -344,38 +332,31 @@ export default function App() {
                         ))}
                     </div>
                  </div>
-
                  <div className="flex-1 flex min-w-[800px] relative">
                     {currentViewSeats.map((seat) => (
                         <div key={seat.id} className="flex-1 border-r border-sim-border/20 relative flex flex-col">
                             <div className="h-[40px] border-b border-sim-yellow bg-sim-black/80 sticky top-0 z-[60] flex items-center justify-center font-bold text-sim-yellow text-[10px] tracking-widest uppercase">{seat.label}</div>
                             <div className="relative flex-1 w-full" onDragOver={(e) => handleDragOver(e, seat.id)} onDrop={(e) => handleDrop(e, seat.id)}>
                                 <div className="absolute inset-0 z-10 cursor-default" onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); const y = e.clientY - e.currentTarget.getBoundingClientRect().top; setContextMenu({ visible: true, x: e.pageX, y: e.pageY, seatId: seat.id, time: minutesToTime(Math.floor(((START_HOUR * 60) + (y / HOUR_HEIGHT * 60)) / 30) * 30) }); }} />
-                                
                                 {dragTarget?.seatId === seat.id && (
                                   <div className="absolute left-0 right-0 z-[80] border-4 border-dashed bg-green-500/30 border-green-400 shadow-2xl flex items-center justify-center text-2xl font-black text-green-400" style={getGridPosition(dragTarget.startTime, dragTarget.endTime, START_HOUR, endHour)}>
                                     {dragTarget.startTime} - {dragTarget.endTime}
                                   </div>
                                 )}
-
                                 {reservations.filter(r => r.seatId === seat.id && r.date === dateStr).map(res => {
                                     const pos = getGridPosition(res.startTime, res.endTime, START_HOUR, endHour);
                                     const selected = selectedIds.includes(res.id);
                                     const currentTimeMins = now.getHours() * 60 + now.getMinutes();
                                     const resStartMins = timeToMinutes(res.startTime);
                                     const resEndMins = timeToMinutes(res.endTime);
-                                    
                                     const isCurrent = isSameDay(currentDate, now);
                                     const isPast = (resEndMins < currentTimeMins && isCurrent) || (currentDate < now && !isCurrent);
                                     const isActive = isCurrent && currentTimeMins >= resStartMins && currentTimeMins <= resEndMins;
-                                    
                                     let styleKey = 'future';
                                     if (isPast) styleKey = 'past';
                                     else if (isActive) styleKey = 'active';
-                                    
                                     const colorKey = `${styleKey}${res.isPaid ? 'Paid' : 'Unpaid'}` as keyof typeof theme;
                                     const color = theme[colorKey] as string;
-
                                     return (
                                         <div 
                                           key={res.id} draggable={!isCtrlPressed} onDragStart={(e) => handleDragStart(e, res.id)} 
@@ -402,8 +383,6 @@ export default function App() {
              </div>
           </div>
         </div>
-
-        {/* Suspension Sidebar */}
         {suspendedGroups.length > 0 && (
           <aside className="w-[20%] bg-sim-dark border-4 border-sim-yellow/30 rounded-xl p-4 overflow-y-auto space-y-4 animate-in slide-in-from-right duration-300">
              <div className="flex items-center gap-2 text-sim-yellow font-black uppercase text-xs border-b border-sim-border pb-2">
@@ -423,8 +402,6 @@ export default function App() {
              ))}
           </aside>
         )}
-
-        {/* Edit Panel (Sidebar) */}
         <aside className="w-[320px] bg-sim-dark/80 backdrop-blur-xl flex flex-col shrink-0 border-l border-sim-border z-[70] transition-all" onClick={(e) => e.stopPropagation()}>
           <div className="p-5 border-b border-sim-border bg-sim-black/20 flex items-center justify-between">
             <div className="flex items-center gap-3 text-sim-yellow font-black text-xs tracking-widest uppercase"><Edit3 size={16}/> Düzenle</div>
@@ -445,11 +422,9 @@ export default function App() {
                        </button>
                     )}
                   </div>
-                  
                   <div className="space-y-4 pt-4 border-t border-sim-border">
                     <div className="space-y-1.5"><label className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Müşteri</label><input type="text" value={editForm.name} onChange={(e) => setEditForm({...editForm, name: e.target.value.toUpperCase()})} className="w-full bg-sim-black border border-sim-border rounded-lg p-3 text-xs text-white uppercase outline-none focus:border-sim-yellow" /></div>
                     <div className="space-y-1.5"><label className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Telefon</label><input type="text" value={editForm.phone} onChange={(e) => setEditForm({...editForm, phone: formatPhoneNumber(e.target.value)})} className="w-full bg-sim-black border border-sim-border rounded-lg p-3 text-xs text-white outline-none focus:border-sim-yellow" /></div>
-                    
                     <div className="space-y-2">
                         <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Masa Değiştir/Ekle (Tüm Masalar)</label>
                         <div className="grid grid-cols-4 gap-2 p-3 bg-sim-black rounded-xl border border-sim-border max-h-[200px] overflow-y-auto">
@@ -459,7 +434,6 @@ export default function App() {
                             })}
                         </div>
                     </div>
-                    
                     <button onClick={handleBlacklistAdd} className="w-full bg-red-500/10 border border-red-500 text-red-500 font-black py-3 rounded-xl text-[10px] uppercase flex items-center justify-center gap-2 hover:bg-red-500 hover:text-white transition-all">Kara Listeye Ekle</button>
                     <button onClick={async () => { if(confirm('Sil?')) { await Promise.all(selectedIds.map(id => supabase.from('reservations').delete().eq('id', id))); setSelectedIds([]); fetchData(); } }} className="w-full bg-transparent border border-red-900/50 text-red-700 font-black py-3 rounded-xl text-[10px] uppercase hover:bg-red-950/20 transition-all">Kayıt Sil</button>
                   </div>
@@ -467,10 +441,9 @@ export default function App() {
             )}
           </div>
         </aside>
-
         <ReservationModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={finalizeReservation} availableSeats={allSeats} view={view} simulatorGroups={simulatorGroups} initialData={infoData} />
         <BlacklistModal isOpen={isBlacklistOpen} onClose={() => setIsBlacklistOpen(false)} blacklist={blacklist} onUpdate={fetchData} />
-        <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} groups={simulatorGroups} onUpdateGroups={setSimulatorGroups} endHour={endHour} onUpdateEndHour={setEndHour} seatLabelPrefix={seatLabelPrefix} onUpdatePrefix={setSeatLabelPrefix} theme={theme} onUpdateTheme={setTheme} />
+        <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} groups={simulatorGroups} onUpdateGroups={setSimulatorGroups} endHour={endHour} onUpdateEndHour={setEndHour} seatLabelPrefix={seatLabelPrefix} onUpdatePrefix={setSeatLabelPrefix} theme={theme} onUpdateTheme={setTheme} onCleanDay={handleCleanDay} onCleanMonth={handleCleanMonth} />
         <InfoModal data={infoData} onClose={() => { setIsInfoOpen(false); setInfoData(null); }} />
         {contextMenu.visible && <ContextMenu {...contextMenu} onClose={() => setContextMenu({...contextMenu, visible: false})} onAction={async (action) => {
              if (action === 'CREATE_NEW') setIsModalOpen(true);
@@ -483,7 +456,6 @@ export default function App() {
       </div>
     </div>
   );
-
   function resetIdleTimer() {
     setShowScreensaver(false);
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
@@ -506,7 +478,7 @@ function LoginScreen() {
         <div className="fixed inset-0 bg-sim-black flex items-center justify-center p-4">
             <div className="w-full max-w-[400px] bg-sim-dark border border-sim-yellow/30 p-10 rounded-2xl shadow-2xl relative">
                 <div className="flex flex-col items-center mb-8">
-                    <img src="/logo.png" alt="Logo" className="h-24 mb-4 object-contain" />
+                    <img src="logo.png" alt="Logo" className="h-24 mb-4 object-contain" />
                     <h2 className="text-sim-yellow font-black text-xs tracking-widest uppercase">SimRacing Manager</h2>
                 </div>
                 <form onSubmit={handleLogin} className="space-y-6">
