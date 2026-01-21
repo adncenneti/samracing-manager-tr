@@ -3,19 +3,43 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { format, addDays, isSameDay, startOfMonth } from 'date-fns';
 import { tr } from 'date-fns/locale';
 import { 
-  Plus, Trash, Save, Edit3, MousePointer2, AlertOctagon, Settings, 
-  Repeat, CheckCircle2, LogOut, Lock, Mail, Loader2, Check, 
-  Clock, PauseCircle, PlayCircle, Palette, RefreshCw, UserPlus,
-  ChevronLeft, ChevronRight
+  Plus, Settings, AlertOctagon, Loader2, Clock, ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { Reservation, Seat, ContextMenuState, BlacklistEntry, SimulatorGroup } from './types';
-import { generateSeats, checkOverlap, getGridPosition, START_HOUR, DEFAULT_END_HOUR, timeToMinutes, minutesToTime, formatPhoneNumber } from './utils';
+import { generateSeats, checkOverlap, getGridPosition, START_HOUR, DEFAULT_END_HOUR, timeToMinutes, minutesToTime } from './utils';
 import { ReservationModal } from './components/ReservationModal';
 import { ContextMenu } from './components/ContextMenu';
 import { BlacklistModal } from './components/BlacklistModal';
 import { SettingsModal } from './components/SettingsModal';
 import { InfoModal } from './components/InfoModal';
 import { supabase } from './supabaseClient';
+
+// Hata Kalkanı Bileşeni
+class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: Error | null}> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: Error) { return { hasError: true, error }; }
+  componentDidCatch(error: Error, errorInfo: any) { console.error("CRITICAL APP ERROR:", error, errorInfo); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="fixed inset-0 bg-black text-red-500 flex flex-col items-center justify-center p-10 z-[9999]">
+          <h1 className="text-3xl font-black mb-4">UYGULAMA HATASI</h1>
+          <p className="text-gray-400 mb-4">Uygulama beklenmedik bir hata ile karşılaştı.</p>
+          <pre className="bg-gray-900 p-6 rounded border border-gray-700 overflow-auto max-w-full text-xs font-mono mb-6">
+            {this.state.error?.toString()}
+          </pre>
+          <button onClick={() => window.location.reload()} className="px-6 py-3 bg-red-600 text-white font-bold rounded hover:bg-red-700 transition-colors">
+            SAYFAYI YENİLE
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const SCREENSAVER_TIMEOUT = 10 * 60 * 1000;
 const HOUR_HEIGHT = 60;
@@ -34,17 +58,22 @@ const DEFAULT_THEME = {
   opacity: '0.8'
 };
 
-export default function App() {
+const DEFAULT_GROUPS: SimulatorGroup[] = [
+  { id: 'LOGITECH', name: 'Logitech G29', seatCount: 8, order: 0 },
+  { id: 'MOZA', name: 'Moza R5', seatCount: 8, order: 1 }
+];
+
+function AppContent() {
   const [session, setSession] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [now, setNow] = useState(new Date());
   
-  const [simulatorGroups, setSimulatorGroups] = useState<SimulatorGroup[]>([]);
+  // Varsayılan olarak default grupları yükle, böylece DB boşsa bile arayüz gelir
+  const [simulatorGroups, setSimulatorGroups] = useState<SimulatorGroup[]>(DEFAULT_GROUPS);
   const [view, setView] = useState<string>('LOGITECH');
   
   const [reservations, setReservations] = useState<Reservation[]>([]);
-  const [suspendedGroups, setSuspendedGroups] = useState<any[]>([]);
   const [blacklist, setBlacklist] = useState<BlacklistEntry[]>([]);
   const [seatLabelPrefix, setSeatLabelPrefix] = useState('S-');
   const [endHour, setEndHour] = useState(DEFAULT_END_HOUR);
@@ -65,39 +94,65 @@ export default function App() {
 
   const dateInputRef = useRef<HTMLInputElement>(null);
   const dateStr = format(currentDate, 'yyyy-MM-dd');
-  const [editForm, setEditForm] = useState({ name: '', phone: '', startTime: '', endTime: '', isPaid: false, seatId: '' });
-
-  const isGroupMode = useMemo(() => selectedIds.length > 1, [selectedIds]);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setAuthLoading(false);
-    });
+    let mounted = true;
+    const initAuth = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        if (mounted) {
+          setSession(data.session);
+          setAuthLoading(false);
+        }
+      } catch (err) {
+        console.error("Auth init warning (offline mode or invalid creds):", err);
+        if (mounted) setAuthLoading(false);
+      }
+    };
+    initAuth();
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+      if (mounted) setSession(session);
     });
-    return () => subscription.unsubscribe();
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const fetchData = useCallback(async () => {
     if (!session) return;
     try {
-      const [resResponse, blResponse, groupsResponse] = await Promise.all([
+      // Promise.allSettled kullanıyoruz, böylece biri hata verse bile diğerleri yüklenir
+      const [resResult, blResult, groupsResult] = await Promise.allSettled([
         supabase.from('reservations').select('*'),
         supabase.from('blacklist').select('*'),
         supabase.from('simulator_groups').select('*').order('order', { ascending: true })
       ]);
-      if (resResponse.data) {
-        setReservations(resResponse.data.map(r => ({
+
+      if (resResult.status === 'fulfilled' && resResult.value.data) {
+        setReservations(resResult.value.data.map(r => ({
           id: r.id, groupId: r.group_id, seatId: r.seat_id, name: r.name,
           phone: r.phone, startTime: r.start_time, endTime: r.end_time,
           isPaid: r.is_paid, createdAt: Number(r.created_at), date: r.date
         })));
       }
-      if (blResponse.data) setBlacklist(blResponse.data);
-      if (groupsResponse.data?.length > 0) setSimulatorGroups(groupsResponse.data);
-    } catch (error) { console.error(error); }
+
+      if (blResult.status === 'fulfilled' && blResult.value.data) {
+        setBlacklist(blResult.value.data);
+      }
+
+      if (groupsResult.status === 'fulfilled' && groupsResult.value.data && groupsResult.value.data.length > 0) {
+        setSimulatorGroups(groupsResult.value.data);
+      } else {
+        // Eğer veritabanında grup tablosu yoksa veya boşsa varsayılanları koru
+        console.warn("Simulator groups not found in DB, using defaults.");
+      }
+    } catch (error) { 
+      console.error("Critical Fetch Error:", error); 
+    }
   }, [session]);
 
   useEffect(() => {
@@ -121,10 +176,12 @@ export default function App() {
   const allSeats = useMemo(() => {
     let seats: Seat[] = [];
     let idx = 1;
-    simulatorGroups.forEach(g => {
-      const gs = generateSeats(g.seatCount, g.id as any, idx, seatLabelPrefix);
+    // Güvenlik kontrolü: simulatorGroups null/undefined ise boş dizi kullan
+    (simulatorGroups || []).forEach(g => {
+      if (!g) return;
+      const gs = generateSeats(g.seatCount || 8, g.id as any, idx, seatLabelPrefix);
       seats = [...seats, ...gs];
-      idx += g.seatCount;
+      idx += (g.seatCount || 8);
     });
     return seats;
   }, [simulatorGroups, seatLabelPrefix]);
@@ -158,10 +215,12 @@ export default function App() {
       await supabase.from('reservations').update({
         seat_id: targetId, start_time: dragTarget.startTime, end_time: dragTarget.endTime
       }).eq('id', draggedResId);
+      // Optimistik güncelleme
+      setReservations(prev => prev.map(r => r.id === draggedResId ? {...r, seatId: targetId, startTime: dragTarget.startTime, endTime: dragTarget.endTime} : r));
     }
     setDraggedResId(null);
     setDragTarget(null);
-    fetchData();
+    fetchData(); // Arka planda senkronize et
   };
 
   const finalizeReservation = async (data: any) => {
@@ -173,13 +232,29 @@ export default function App() {
       return;
     }
     const gid = Math.random().toString(36).substr(2, 9);
-    await supabase.from('reservations').insert(data.selectedSeats.map((sid: string) => ({
+    
+    // Optimistik Ekleme
+    const newReservations = data.selectedSeats.map((sid: string, idx: number) => ({
+      id: `temp-${Date.now()}-${idx}`,
+      groupId: gid, seatId: sid, name: data.name, phone: data.phone,
+      startTime: data.startTime, endTime: data.endTime, isPaid: data.isPaid,
+      createdAt: Date.now(), date: dateStr
+    }));
+    setReservations(prev => [...prev, ...newReservations]);
+
+    const { error } = await supabase.from('reservations').insert(data.selectedSeats.map((sid: string) => ({
       group_id: gid, seat_id: sid, name: data.name, phone: data.phone,
       start_time: data.startTime, end_time: data.endTime, is_paid: data.isPaid,
-      created_at: Date.now(), date: dateStr, user_id: session.user.id
+      created_at: Date.now(), date: dateStr, user_id: session?.user?.id
     })));
+
+    if (error) {
+      alert("Kayıt sırasında hata oluştu: " + error.message);
+      fetchData(); // Hata varsa gerçek veriyi geri yükle
+    } else {
+      fetchData(); // ID'leri güncellemek için
+    }
     setIsModalOpen(false);
-    fetchData();
   };
 
   const handleCleanDay = async () => {
@@ -206,7 +281,8 @@ export default function App() {
           <header className="flex items-center justify-between px-6 py-4 border-b border-sim-border bg-[#121212] shrink-0 z-[70]">
             <div className="flex items-center gap-8">
               <div className="h-16 w-24 flex items-center justify-center relative group/logo cursor-pointer">
-                <img src="logo.png" alt="Logo" className="w-full h-full object-contain relative z-10" />
+                <img src="logo.png" alt="Logo" className="w-full h-full object-contain relative z-10" onError={(e) => (e.currentTarget.style.display = 'none')} />
+                <span className="text-xs font-black text-sim-yellow absolute opacity-20">LOGO</span>
               </div>
               <div className="flex items-center gap-1">
                 <button onClick={(e) => {e.stopPropagation(); setCurrentDate(prev => addDays(prev, -1))}} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-sim-yellow rounded-full"><ChevronLeft size={16}/></button>
@@ -321,14 +397,14 @@ function LoginScreen() {
         e.preventDefault();
         setLoading(true);
         const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) alert('Hatalı giriş.');
+        if (error) alert('Hatalı giriş: ' + error.message);
         setLoading(false);
     };
     return (
         <div className="fixed inset-0 bg-sim-black flex items-center justify-center p-4">
             <div className="w-full max-w-[400px] bg-sim-dark border border-sim-yellow/30 p-10 rounded-2xl shadow-2xl relative">
                 <div className="flex flex-col items-center mb-8">
-                    <img src="logo.png" alt="Logo" className="h-24 mb-4 object-contain" />
+                    <img src="logo.png" alt="Logo" className="h-24 mb-4 object-contain" onError={(e) => (e.currentTarget.style.display = 'none')} />
                     <h2 className="text-sim-yellow font-black text-xs tracking-widest uppercase">SimRacing Manager</h2>
                 </div>
                 <form onSubmit={handleLogin} className="space-y-6">
@@ -339,4 +415,12 @@ function LoginScreen() {
             </div>
         </div>
     );
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppContent />
+    </ErrorBoundary>
+  );
 }
