@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { X, Settings, Plus, Trash2, Save, Monitor, Clock, Type, Database } from 'lucide-react';
+import { X, Settings, Plus, Trash2, Monitor, Clock, Type, Database, Palette, RefreshCw } from 'lucide-react';
 import { SimulatorGroup } from '../types';
 
 interface SettingsModalProps {
@@ -14,63 +14,36 @@ interface SettingsModalProps {
   onUpdatePrefix: (prefix: string) => void;
   onCleanDay: () => void;
   onCleanMonth: () => void;
+  theme: any;
+  onUpdateTheme: (theme: any) => void;
 }
 
-const API_URL = 'http://localhost:3001';
-
 export const SettingsModal: React.FC<SettingsModalProps> = ({
-  isOpen,
-  onClose,
-  groups,
-  onUpdateGroups,
-  endHour,
-  onUpdateEndHour,
-  seatLabelPrefix,
-  onUpdatePrefix,
-  onCleanDay,
-  onCleanMonth
+  isOpen, onClose, groups, onUpdateGroups, endHour, onUpdateEndHour, 
+  seatLabelPrefix, onUpdatePrefix, onCleanDay, onCleanMonth, theme, onUpdateTheme
 }) => {
-  const [localGroups, setLocalGroups] = useState<SimulatorGroup[]>(groups);
-  const [newGroupName, setNewGroupName] = useState('');
-  const [activeTab, setActiveTab] = useState<'GROUPS' | 'GENERAL' | 'CLEAN'>('GROUPS');
-
-  React.useEffect(() => {
-    setLocalGroups(groups);
-  }, [groups]);
+  const [activeTab, setActiveTab] = useState<'GROUPS' | 'GENERAL' | 'THEME' | 'CLEAN'>('GROUPS');
 
   if (!isOpen) return null;
 
-  const handleAddGroup = async () => {
-    if (!newGroupName.trim()) return;
-    const newId = newGroupName.toUpperCase().replace(/\s+/g, '_');
-    const newGroup: SimulatorGroup = {
-      id: newId,
-      name: newGroupName,
-      seatCount: 4,
-      order: localGroups.length
-    };
-    const updated = [...localGroups, newGroup];
-    setLocalGroups(updated);
-    onUpdateGroups(updated);
-    setNewGroupName('');
-  };
-
-  const handleDeleteGroup = async (id: string) => {
-    if (!confirm('Bu tablo grubunu silmek istediğinize emin misiniz?')) return;
-    const updated = localGroups.filter(g => g.id !== id);
-    setLocalGroups(updated);
-    onUpdateGroups(updated);
-  };
-
-  const handleUpdateGroup = (id: string, updates: Partial<SimulatorGroup>) => {
-    const updatedList = localGroups.map(g => g.id === id ? { ...g, ...updates } : g);
-    setLocalGroups(updatedList);
-    onUpdateGroups(updatedList);
+  const handleResetTheme = () => {
+    onUpdateTheme({
+      border: '#333333',
+      main: '#fbbf24',
+      timeline: '#fbbf24',
+      pastUnpaid: '#454545',
+      pastPaid: '#064e3b',
+      activeUnpaid: '#dc2626',
+      activePaid: '#059669',
+      futureUnpaid: '#1e1e1e',
+      futurePaid: '#065f46',
+      opacity: '0.8'
+    });
   };
 
   return (
     <div className="fixed inset-0 bg-black/80 z-[110] flex items-center justify-center p-4 backdrop-blur-md">
-      <div className="bg-sim-dark border border-sim-yellow rounded-xl w-[600px] h-[70vh] flex flex-col shadow-2xl overflow-hidden">
+      <div className="bg-sim-dark border border-sim-yellow rounded-xl w-[700px] h-[80vh] flex flex-col shadow-2xl overflow-hidden">
         
         <div className="p-4 border-b border-sim-border flex items-center justify-between bg-sim-black/40">
            <h2 className="text-sim-yellow font-black uppercase text-xs tracking-widest flex items-center gap-2">
@@ -80,130 +53,119 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         <div className="flex border-b border-sim-border bg-sim-black/20">
-            <button 
-                onClick={() => setActiveTab('GROUPS')}
-                className={`flex-1 py-3 text-[10px] font-bold uppercase transition-colors ${activeTab === 'GROUPS' ? 'text-sim-yellow border-b-2 border-sim-yellow bg-sim-yellow/5' : 'text-gray-500 hover:text-gray-300'}`}
-            >
-                Tablo & Gruplar
-            </button>
-            <button 
-                onClick={() => setActiveTab('GENERAL')}
-                className={`flex-1 py-3 text-[10px] font-bold uppercase transition-colors ${activeTab === 'GENERAL' ? 'text-sim-yellow border-b-2 border-sim-yellow bg-sim-yellow/5' : 'text-gray-500 hover:text-gray-300'}`}
-            >
-                Genel Ayarlar
-            </button>
-            <button 
-                onClick={() => setActiveTab('CLEAN')}
-                className={`flex-1 py-3 text-[10px] font-bold uppercase transition-colors ${activeTab === 'CLEAN' ? 'text-red-500 border-b-2 border-red-500 bg-red-500/5' : 'text-gray-500 hover:text-gray-300'}`}
-            >
-                Veri Temizliği
-            </button>
+            {['GROUPS', 'GENERAL', 'THEME', 'CLEAN'].map((tab: any) => (
+              <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 py-3 text-[10px] font-bold uppercase transition-colors ${activeTab === tab ? 'text-sim-yellow border-b-2 border-sim-yellow bg-sim-yellow/5' : 'text-gray-500 hover:text-gray-300'}`}>
+                {tab === 'GROUPS' ? 'Gruplar' : tab === 'GENERAL' ? 'Genel' : tab === 'THEME' ? 'Görünüm' : 'Temizlik'}
+              </button>
+            ))}
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 bg-sim-black/20">
             {activeTab === 'GROUPS' && (
-                <div className="space-y-6">
-                    <div className="flex gap-2 p-4 bg-sim-black border border-sim-border rounded-lg">
-                        <input 
-                            type="text" 
-                            value={newGroupName}
-                            onChange={(e) => setNewGroupName(e.target.value)}
-                            placeholder="Yeni Tablo İsmi"
-                            className="flex-1 bg-sim-dark border border-sim-border rounded px-3 text-xs text-white focus:border-sim-yellow outline-none"
-                        />
-                        <button onClick={handleAddGroup} className="bg-sim-yellow text-black font-bold px-4 rounded text-xs uppercase flex items-center gap-2 hover:brightness-110 transition-all">
-                            <Plus size={14}/> Ekle
-                        </button>
+              <div className="space-y-4">
+                 {groups.map((group, idx) => (
+                    <div key={group.id} className="bg-sim-black border border-sim-border rounded-lg p-4 flex items-center justify-between">
+                       <div className="space-y-1">
+                          <div className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Grup ID / İsim</div>
+                          <div className="flex items-center gap-2">
+                             <span className="bg-sim-dark px-2 py-1 rounded text-[10px] font-mono text-gray-400 border border-sim-border">{group.id}</span>
+                             <input 
+                               type="text" 
+                               value={group.name}
+                               onChange={(e) => {
+                                  const newGroups = [...groups];
+                                  newGroups[idx].name = e.target.value;
+                                  onUpdateGroups(newGroups);
+                               }}
+                               className="bg-transparent border-b border-gray-700 focus:border-sim-yellow outline-none text-sm font-bold text-white w-32"
+                             />
+                          </div>
+                       </div>
+                       <div>
+                          <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Koltuk Adedi</label>
+                          <input 
+                            type="number" 
+                            min="1" 
+                            max="20"
+                            value={group.seatCount}
+                            onChange={(e) => {
+                               const newGroups = [...groups];
+                               newGroups[idx].seatCount = parseInt(e.target.value) || 0;
+                               onUpdateGroups(newGroups);
+                            }}
+                            className="bg-sim-dark border border-sim-border text-sim-yellow font-mono text-center w-16 py-1 rounded focus:border-sim-yellow outline-none"
+                          />
+                       </div>
                     </div>
-                    <div className="space-y-3">
-                        {localGroups.map((group) => (
-                            <div key={group.id} className="bg-sim-black border border-sim-border rounded-lg p-4 flex items-center gap-4 group hover:border-sim-border/60 transition-colors">
-                                <div className="p-3 bg-sim-dark rounded text-sim-yellow border border-sim-border"><Monitor size={20}/></div>
-                                <div className="flex-1 space-y-2">
-                                    <input 
-                                        type="text" 
-                                        value={group.name}
-                                        onChange={(e) => handleUpdateGroup(group.id, { name: e.target.value })}
-                                        className="bg-transparent text-sm font-black text-white uppercase border-b border-transparent focus:border-sim-yellow outline-none w-full"
-                                    />
-                                    <div className="flex items-center gap-2 bg-sim-dark rounded px-2 py-1 border border-sim-border/50 w-fit">
-                                        <span className="text-[10px] text-gray-500 font-bold uppercase">Masa Sayısı</span>
-                                        <input 
-                                            type="number" 
-                                            value={group.seatCount}
-                                            onChange={(e) => handleUpdateGroup(group.id, { seatCount: parseInt(e.target.value) || 1 })}
-                                            className="w-12 bg-transparent text-center text-xs font-mono text-sim-yellow outline-none"
-                                        />
-                                    </div>
-                                </div>
-                                <button onClick={() => handleDeleteGroup(group.id)} className="p-2 text-gray-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={18}/></button>
-                            </div>
-                        ))}
-                    </div>
-                </div>
+                 ))}
+                 <div className="p-4 border-2 border-dashed border-sim-border rounded-lg flex flex-col items-center justify-center text-gray-600 gap-2 opacity-50 cursor-not-allowed">
+                    <Database size={24}/>
+                    <span className="text-[10px] font-bold uppercase">Yeni Grup Ekleme Devre Dışı (Veritabanı Kısıtlaması)</span>
+                 </div>
+              </div>
             )}
 
+            {activeTab === 'THEME' && (
+              <div className="space-y-6">
+                 <div className="flex items-center justify-between">
+                    <h3 className="text-white font-black text-xs uppercase flex items-center gap-2"><Palette size={14}/> Tema Ayarları</h3>
+                    <button onClick={handleResetTheme} className="text-[10px] font-bold text-sim-yellow flex items-center gap-1 uppercase hover:underline"><RefreshCw size={10}/> Varsayılanlara Dön</button>
+                 </div>
+
+                 <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-4 bg-sim-black p-4 rounded-lg border border-sim-border">
+                       <h4 className="text-[9px] font-black text-gray-500 uppercase border-b border-sim-border pb-1">Genel Yapı</h4>
+                       {['main', 'border', 'timeline'].map(key => (
+                         <div key={key} className="flex items-center justify-between">
+                            <span className="text-[10px] text-gray-300 uppercase font-bold">{key === 'main' ? 'Ana Tema' : key === 'border' ? 'Hücre Kenarlığı' : 'Saat Perdesi'}</span>
+                            <input type="color" value={theme[key]} onChange={(e) => onUpdateTheme({...theme, [key]: e.target.value})} className="bg-transparent border-0 w-8 h-8 cursor-pointer" />
+                         </div>
+                       ))}
+                       <div className="pt-2">
+                          <label className="text-[9px] text-gray-500 font-bold uppercase">Hücre Saydamlığı: {Math.round(theme.opacity * 100)}%</label>
+                          <input type="range" min="0.1" max="1" step="0.1" value={theme.opacity} onChange={(e) => onUpdateTheme({...theme, opacity: e.target.value})} className="w-full h-1 bg-sim-dark rounded-lg appearance-none cursor-pointer accent-sim-yellow" />
+                       </div>
+                    </div>
+
+                    <div className="space-y-4 bg-sim-black p-4 rounded-lg border border-sim-border">
+                       <h4 className="text-[9px] font-black text-gray-500 uppercase border-b border-sim-border pb-1">Hücre Durumları</h4>
+                       {['pastPaid', 'pastUnpaid', 'activePaid', 'activeUnpaid', 'futurePaid', 'futureUnpaid'].map(key => (
+                         <div key={key} className="flex items-center justify-between">
+                            <span className="text-[9px] text-gray-300 uppercase font-bold">
+                               {key.includes('past') ? 'Geçmiş' : key.includes('active') ? 'Aktif' : 'Gelecek'} - {key.includes('Paid') ? 'Ödendi' : 'Ödenmedi'}
+                            </span>
+                            <input type="color" value={theme[key]} onChange={(e) => onUpdateTheme({...theme, [key]: e.target.value})} className="bg-transparent border-0 w-6 h-6 cursor-pointer" />
+                         </div>
+                       ))}
+                    </div>
+                 </div>
+              </div>
+            )}
+            
             {activeTab === 'GENERAL' && (
-                <div className="space-y-6">
-                    <div className="bg-sim-black border border-sim-border rounded-lg p-4 space-y-4">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 bg-sim-dark rounded text-gray-400"><Clock size={18}/></div>
-                                <div><div className="text-xs font-black text-gray-300 uppercase">Kapanış Saati</div></div>
-                            </div>
-                            <div className="flex items-center gap-2 bg-sim-dark rounded p-1 border border-sim-border">
-                                <button onClick={() => onUpdateEndHour(Math.max(10, endHour - 1))} className="w-8 h-8 flex items-center justify-center hover:bg-sim-gray rounded text-gray-400 font-bold">-</button>
-                                <span className="w-12 text-center text-sm font-mono text-sim-yellow font-bold">{endHour}:00</span>
-                                <button onClick={() => onUpdateEndHour(endHour + 1)} className="w-8 h-8 flex items-center justify-center hover:bg-sim-gray rounded text-gray-400 font-bold">+</button>
-                            </div>
-                        </div>
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 bg-sim-dark rounded text-gray-400"><Type size={18}/></div>
-                                <div><div className="text-xs font-black text-gray-300 uppercase">Masa Etiket Ön Eki</div></div>
-                            </div>
-                            <input 
-                                type="text" 
-                                value={seatLabelPrefix}
-                                onChange={(e) => onUpdatePrefix(e.target.value)}
-                                className="w-24 bg-sim-dark border border-sim-border rounded p-2 text-center text-sm font-bold text-sim-yellow outline-none"
-                            />
-                        </div>
-                    </div>
-                </div>
+              <div className="space-y-4">
+                 <div className="flex items-center justify-between p-4 bg-sim-black border border-sim-border rounded-lg">
+                    <span className="text-xs font-bold text-gray-300 uppercase">Kapanış Saati</span>
+                    <input type="number" value={endHour} onChange={(e) => onUpdateEndHour(parseInt(e.target.value))} className="bg-sim-dark border border-sim-border text-sim-yellow font-mono px-3 py-1 rounded w-16" />
+                 </div>
+                 <div className="flex items-center justify-between p-4 bg-sim-black border border-sim-border rounded-lg">
+                    <span className="text-xs font-bold text-gray-300 uppercase">Koltuk Ön Eki</span>
+                    <input type="text" value={seatLabelPrefix} onChange={(e) => onUpdatePrefix(e.target.value)} className="bg-sim-dark border border-sim-border text-sim-yellow font-bold px-3 py-1 rounded w-24" />
+                 </div>
+              </div>
             )}
-
+            
             {activeTab === 'CLEAN' && (
-                <div className="space-y-4">
-                    <div className="p-4 bg-red-900/10 border border-red-900/30 rounded-lg">
-                        <h3 className="text-red-500 font-black text-xs uppercase mb-1 flex items-center gap-2"><Database size={14}/> Veri Temizleme</h3>
-                        <p className="text-[10px] text-gray-500 uppercase font-bold mb-4">Bu işlemler kalıcıdır ve geri alınamaz.</p>
-                        
-                        <div className="space-y-3">
-                            <button 
-                                onClick={onCleanDay}
-                                className="w-full flex items-center justify-between p-4 bg-sim-dark border border-sim-border rounded-lg hover:border-red-500 transition-all group"
-                            >
-                                <div className="text-left">
-                                    <div className="text-[10px] font-black text-white uppercase">Günlük Temizlik</div>
-                                    <div className="text-[9px] text-gray-500 uppercase">Seçili gündeki tüm kayıtları siler</div>
-                                </div>
-                                <Trash2 size={16} className="text-gray-600 group-hover:text-red-500 transition-colors"/>
-                            </button>
-
-                            <button 
-                                onClick={onCleanMonth}
-                                className="w-full flex items-center justify-between p-4 bg-sim-dark border border-sim-border rounded-lg hover:border-red-500 transition-all group"
-                            >
-                                <div className="text-left">
-                                    <div className="text-[10px] font-black text-white uppercase">Aylık Temizlik</div>
-                                    <div className="text-[9px] text-gray-500 uppercase">Geçmiş ay verilerini siler (Bugün hariç)</div>
-                                </div>
-                                <Trash2 size={16} className="text-gray-600 group-hover:text-red-500 transition-colors"/>
-                            </button>
-                        </div>
-                    </div>
-                </div>
+              <div className="space-y-4">
+                 <button onClick={onCleanDay} className="w-full p-6 border-2 border-dashed border-red-500/30 bg-red-500/5 rounded-xl hover:bg-red-500/10 transition-all text-left">
+                    <h4 className="text-red-500 font-black text-sm uppercase">Bugünü Temizle</h4>
+                    <p className="text-xs text-gray-500 uppercase font-bold">Sadece seçili takvim günündeki randevuları kalıcı olarak siler.</p>
+                 </button>
+                 <button onClick={onCleanMonth} className="w-full p-6 border-2 border-dashed border-red-900/30 bg-red-900/5 rounded-xl hover:bg-red-900/10 transition-all text-left">
+                    <h4 className="text-red-900 font-black text-sm uppercase">Geçmişi Temizle</h4>
+                    <p className="text-xs text-gray-500 uppercase font-bold">Mevcut aydaki bugün hariç geçmiş tüm kayıtları siler.</p>
+                 </button>
+              </div>
             )}
         </div>
       </div>
