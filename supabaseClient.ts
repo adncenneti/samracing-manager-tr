@@ -1,13 +1,41 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-// URL ve Key'in çevre değişkenlerinden (env) geldiğinden emin olun.
-// Bu değişkenler vite/nextjs/cra ortamına göre VITE_SUPABASE_URL vb. olabilir.
-const SUPABASE_URL = process.env.SUPABASE_URL || 'sb_publishable__ZUXekM5cAMTK69I30K6yw_PCwPgqi3'; 
-const SUPABASE_ANON_KEY = process.env.API_KEY || 'sb_secret_qKDjbBrv62OzbffCz-kiKw__4IXZJCL';
+// Ortam değişkenlerine güvenli erişim (Environment Agnostic)
+const getEnv = (key: string) => {
+  try {
+    // @ts-ignore
+    if (typeof process !== 'undefined' && process?.env && process.env[key]) {
+      // @ts-ignore
+      return process.env[key];
+    }
+  } catch (e) {}
+  
+  try {
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta?.env && import.meta.env[key]) {
+      // @ts-ignore
+      return import.meta.env[key];
+    }
+  } catch (e) {}
+  
+  return '';
+};
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  console.warn("Supabase credentials (URL or API_KEY) are missing in environment variables.");
-}
+// Değerleri al veya varsayılan güvenli değerlere düş
+const rawUrl = getEnv('SUPABASE_URL') || getEnv('VITE_SUPABASE_URL');
+const rawKey = getEnv('API_KEY') || getEnv('VITE_SUPABASE_ANON_KEY');
+
+// URL'in geçerli olup olmadığını kontrol et
+const isValidUrl = (urlString: string) => {
+  try { 
+    return Boolean(new URL(urlString)); 
+  } catch(e){ 
+    return false; 
+  }
+};
+
+const SUPABASE_URL = isValidUrl(rawUrl) ? rawUrl : 'sb_publishable__ZUXekM5cAMTK69I30K6yw_PCwPgqi3';
+const SUPABASE_ANON_KEY = rawKey || 'sb_secret_qKDjbBrv62OzbffCz-kiKw__4IXZJCL';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
