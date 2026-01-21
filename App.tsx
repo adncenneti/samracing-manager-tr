@@ -1,6 +1,8 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+// Fix: startOfMonth is a standard export from date-fns
 import { format, addDays, isSameDay, startOfMonth } from 'date-fns';
+// Fix: tr locale is exported from date-fns/locale/tr or as part of the locale object
 import { tr } from 'date-fns/locale';
 import { 
   Plus, Settings, AlertOctagon, Loader2, Clock, ChevronLeft, ChevronRight
@@ -14,7 +16,6 @@ import { SettingsModal } from './components/SettingsModal';
 import { InfoModal } from './components/InfoModal';
 import { supabase } from './supabaseClient';
 
-// Hata Kalkanı Bileşeni
 class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: Error | null}> {
   constructor(props: any) {
     super(props);
@@ -31,9 +32,7 @@ class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasErr
           <pre className="bg-gray-900 p-6 rounded border border-gray-700 overflow-auto max-w-full text-xs font-mono mb-6">
             {this.state.error?.toString()}
           </pre>
-          <button onClick={() => window.location.reload()} className="px-6 py-3 bg-red-600 text-white font-bold rounded hover:bg-red-700 transition-colors">
-            SAYFAYI YENİLE
-          </button>
+          <button onClick={() => window.location.reload()} className="px-6 py-3 bg-red-600 text-white font-bold rounded hover:bg-red-700 transition-colors">SAYFAYI YENİLE</button>
         </div>
       );
     }
@@ -41,7 +40,6 @@ class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasErr
   }
 }
 
-const SCREENSAVER_TIMEOUT = 10 * 60 * 1000;
 const HOUR_HEIGHT = 60;
 const HEADER_HEIGHT = 40;
 
@@ -69,7 +67,6 @@ function AppContent() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [now, setNow] = useState(new Date());
   
-  // Varsayılan olarak default grupları yükle, böylece DB boşsa bile arayüz gelir
   const [simulatorGroups, setSimulatorGroups] = useState<SimulatorGroup[]>(DEFAULT_GROUPS);
   const [view, setView] = useState<string>('LOGITECH');
   
@@ -99,19 +96,21 @@ function AppContent() {
     let mounted = true;
     const initAuth = async () => {
       try {
+        // Fix: Use supabase.auth.getSession()
         const { data, error } = await supabase.auth.getSession();
-        if (error) throw error;
         if (mounted) {
-          setSession(data.session);
+          if (error) console.warn("Supabase Auth Error:", error.message);
+          setSession(data?.session || null);
           setAuthLoading(false);
         }
       } catch (err) {
-        console.error("Auth init warning (offline mode or invalid creds):", err);
+        console.error("Auth Exception:", err);
         if (mounted) setAuthLoading(false);
       }
     };
     initAuth();
 
+    // Fix: Use supabase.auth.onAuthStateChange
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (mounted) setSession(session);
     });
@@ -125,7 +124,6 @@ function AppContent() {
   const fetchData = useCallback(async () => {
     if (!session) return;
     try {
-      // Promise.allSettled kullanıyoruz, böylece biri hata verse bile diğerleri yüklenir
       const [resResult, blResult, groupsResult] = await Promise.allSettled([
         supabase.from('reservations').select('*'),
         supabase.from('blacklist').select('*'),
@@ -136,7 +134,7 @@ function AppContent() {
         setReservations(resResult.value.data.map(r => ({
           id: r.id, groupId: r.group_id, seatId: r.seat_id, name: r.name,
           phone: r.phone, startTime: r.start_time, endTime: r.end_time,
-          isPaid: r.is_paid, createdAt: Number(r.created_at), date: r.date
+          isPaid: r.is_paid, createdAt: Number(r.created_at || Date.now()), date: r.date
         })));
       }
 
@@ -145,26 +143,26 @@ function AppContent() {
       }
 
       if (groupsResult.status === 'fulfilled' && groupsResult.value.data && groupsResult.value.data.length > 0) {
-        // DB'den gelen snake_case veriyi camelCase'e dönüştür
         const mappedGroups = groupsResult.value.data.map((g: any) => ({
           id: g.id,
           name: g.name,
-          seatCount: g.seat_count || g.seatCount || 8, // seat_count veritabanından, seatCount default'tan gelebilir
-          order: g.order
+          seatCount: Number(g.seat_count || g.seatCount || 8),
+          order: Number(g.order || 0)
         }));
         setSimulatorGroups(mappedGroups);
-      } else {
-        // Eğer veritabanında grup tablosu yoksa veya boşsa varsayılanları koru
-        console.warn("Simulator groups not found in DB, using defaults.");
+        if (!mappedGroups.find(mg => mg.id === view)) {
+          setView(mappedGroups[0].id);
+        }
       }
     } catch (error) { 
-      console.error("Critical Fetch Error:", error); 
+      console.error("Fetch Data Error:", error); 
     }
-  }, [session]);
+  }, [session, view]);
 
   useEffect(() => {
-    if (!session) return;
-    fetchData();
+    if (session) {
+      fetchData();
+    }
     const interval = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(interval);
   }, [session, fetchData]);
@@ -183,11 +181,9 @@ function AppContent() {
   const allSeats = useMemo(() => {
     let seats: Seat[] = [];
     let idx = 1;
-    // Güvenlik kontrolü: simulatorGroups null/undefined ise boş dizi kullan
-    (simulatorGroups || []).forEach(g => {
+    (simulatorGroups || DEFAULT_GROUPS).forEach(g => {
       if (!g) return;
-      // seatCount değerinin sayı olduğundan emin ol
-      const count = typeof g.seatCount === 'number' ? g.seatCount : 8;
+      const count = Number(g.seatCount) || 8;
       const gs = generateSeats(count, g.id as any, idx, seatLabelPrefix);
       seats = [...seats, ...gs];
       idx += count;
@@ -195,12 +191,11 @@ function AppContent() {
     return seats;
   }, [simulatorGroups, seatLabelPrefix]);
 
-  const currentViewSeats = allSeats.filter(s => s.type === view);
+  const currentViewSeats = useMemo(() => allSeats.filter(s => s.type === view), [allSeats, view]);
 
   const handleDragStart = (e: React.DragEvent, id: string) => {
     if (isCtrlPressed) { e.preventDefault(); return; }
     setDraggedResId(id);
-    (e.target as HTMLElement).style.opacity = '0.4';
   };
 
   const handleDragOver = (e: React.DragEvent, seatId: string) => {
@@ -221,15 +216,19 @@ function AppContent() {
   const handleDrop = async (e: React.DragEvent, targetId: string) => {
     e.preventDefault();
     if (dragTarget?.isValid && draggedResId) {
-      await supabase.from('reservations').update({
+      const { error } = await supabase.from('reservations').update({
         seat_id: targetId, start_time: dragTarget.startTime, end_time: dragTarget.endTime
       }).eq('id', draggedResId);
-      // Optimistik güncelleme
-      setReservations(prev => prev.map(r => r.id === draggedResId ? {...r, seatId: targetId, startTime: dragTarget.startTime, endTime: dragTarget.endTime} : r));
+      
+      if (!error) {
+        setReservations(prev => prev.map(r => r.id === draggedResId ? {...r, seatId: targetId, startTime: dragTarget.startTime, endTime: dragTarget.endTime} : r));
+      } else {
+        alert("Güncelleme hatası: " + error.message);
+      }
     }
     setDraggedResId(null);
     setDragTarget(null);
-    fetchData(); // Arka planda senkronize et
+    fetchData();
   };
 
   const finalizeReservation = async (data: any) => {
@@ -242,27 +241,16 @@ function AppContent() {
     }
     const gid = Math.random().toString(36).substr(2, 9);
     
-    // Optimistik Ekleme
-    const newReservations = data.selectedSeats.map((sid: string, idx: number) => ({
-      id: `temp-${Date.now()}-${idx}`,
-      groupId: gid, seatId: sid, name: data.name, phone: data.phone,
-      startTime: data.startTime, endTime: data.endTime, isPaid: data.isPaid,
-      createdAt: Date.now(), date: dateStr
-    }));
-    setReservations(prev => [...prev, ...newReservations]);
-
     const { error } = await supabase.from('reservations').insert(data.selectedSeats.map((sid: string) => ({
       group_id: gid, seat_id: sid, name: data.name, phone: data.phone,
-      start_time: data.startTime, end_time: data.endTime, is_paid: data.is_paid, // Düzeltme: is_paid (snake_case)
+      start_time: data.startTime, end_time: data.endTime, is_paid: data.isPaid,
       created_at: Date.now(), date: dateStr, user_id: session?.user?.id
     })));
 
     if (error) {
-      alert("Kayıt sırasında hata oluştu: " + error.message);
-      fetchData(); // Hata varsa gerçek veriyi geri yükle
-    } else {
-      fetchData(); // ID'leri güncellemek için
+      alert("Kayıt hatası: " + error.message);
     }
+    fetchData();
     setIsModalOpen(false);
   };
 
@@ -280,27 +268,33 @@ function AppContent() {
     fetchData();
   };
 
-  if (authLoading) return <div className="fixed inset-0 bg-sim-black flex items-center justify-center text-sim-yellow"><Loader2 className="animate-spin" size={48}/></div>;
+  if (authLoading) return (
+    <div className="fixed inset-0 bg-sim-black flex flex-col items-center justify-center text-sim-yellow gap-4">
+      <Loader2 className="animate-spin" size={48}/>
+      <span className="text-[10px] font-black uppercase tracking-widest animate-pulse">Sistem Yükleniyor...</span>
+    </div>
+  );
+  
   if (!session) return <LoginScreen />;
 
   return (
     <div className="fixed inset-0 bg-sim-black overflow-hidden flex items-center justify-center p-[2vh_2vw]">
-      <div className={`h-full flex flex-row gap-4 transition-all duration-500 w-full`}>
-        <div className={`h-full flex flex-col bg-sim-dark border-4 rounded-xl shadow-2xl overflow-hidden relative w-full`} style={{ borderColor: theme.main }} onClick={() => setSelectedIds([])}>
+      <div className="h-full flex flex-row gap-4 w-full">
+        <div className="h-full flex flex-col bg-sim-dark border-4 rounded-xl shadow-2xl overflow-hidden relative w-full" style={{ borderColor: theme.main }} onClick={() => setSelectedIds([])}>
           <header className="flex items-center justify-between px-6 py-4 border-b border-sim-border bg-[#121212] shrink-0 z-[70]">
             <div className="flex items-center gap-8">
               <div className="h-16 w-24 flex items-center justify-center relative group/logo cursor-pointer">
                 <img src="logo.png" alt="Logo" className="w-full h-full object-contain relative z-10" onError={(e) => (e.currentTarget.style.display = 'none')} />
-                <span className="text-xs font-black text-sim-yellow absolute opacity-20">LOGO</span>
+                <span className="text-xs font-black text-sim-yellow absolute opacity-20 uppercase">Sim Manager</span>
               </div>
               <div className="flex items-center gap-1">
-                <button onClick={(e) => {e.stopPropagation(); setCurrentDate(prev => addDays(prev, -1))}} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-sim-yellow rounded-full"><ChevronLeft size={16}/></button>
+                <button onClick={(e) => {e.stopPropagation(); setCurrentDate(prev => addDays(prev, -1))}} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-sim-yellow rounded-full transition-colors"><ChevronLeft size={16}/></button>
                 <div onClick={(e) => {e.stopPropagation(); dateInputRef.current?.showPicker()}} className="flex flex-col items-center px-4 cursor-pointer group relative">
                     <span className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">{format(currentDate, 'EEEE', { locale: tr })}</span>
                     <span className="text-sm font-medium text-gray-200 tracking-tight">{format(currentDate, 'dd MMMM yyyy', { locale: tr })}</span>
-                    <input ref={dateInputRef} type="date" onChange={(e) => setCurrentDate(new Date(e.target.value))} value={dateStr} className="absolute inset-0 opacity-0 cursor-pointer pointer-events-auto" />
+                    <input ref={dateInputRef} type="date" onChange={(e) => setCurrentDate(new Date(e.target.value))} value={dateStr} className="absolute inset-0 opacity-0 cursor-pointer" />
                 </div>
-                <button onClick={(e) => {e.stopPropagation(); setCurrentDate(prev => addDays(prev, 1))}} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-sim-yellow rounded-full"><ChevronRight size={16}/></button>
+                <button onClick={(e) => {e.stopPropagation(); setCurrentDate(prev => addDays(prev, 1))}} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-sim-yellow rounded-full transition-colors"><ChevronRight size={16}/></button>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -311,7 +305,7 @@ function AppContent() {
                       <button key={g.id} onClick={(e) => {e.stopPropagation(); setView(g.id)}} className={`px-4 py-1.5 rounded-md font-bold text-[10px] uppercase transition-all whitespace-nowrap ${view === g.id ? 'bg-sim-yellow text-black' : 'text-gray-500 hover:text-gray-300'}`}>{g.name}</button>
                   ))}
               </div>
-              <button onClick={() => setIsModalOpen(true)} className="bg-sim-yellow text-black px-5 py-2 rounded-lg font-black text-[11px] uppercase flex items-center gap-2 shadow-lg shadow-yellow-500/10"><Plus size={14}/> Yeni</button>
+              <button onClick={() => setIsModalOpen(true)} className="bg-sim-yellow text-black px-5 py-2 rounded-lg font-black text-[11px] uppercase flex items-center gap-2 shadow-lg shadow-yellow-500/10 active:scale-95 transition-transform"><Plus size={14}/> Yeni Kayıt</button>
             </div>
           </header>
           <div className="flex-1 overflow-auto relative bg-sim-black">
@@ -327,7 +321,7 @@ function AppContent() {
                    </div>
                  )}
                  <div className="w-14 shrink-0 bg-sim-dark border-r border-sim-border sticky left-0 z-[65] flex flex-col">
-                    <div className="h-[40px] border-b border-sim-yellow flex items-center justify-center font-bold text-[8px] text-sim-yellow uppercase sticky top-0 bg-sim-dark z-10">TIME</div>
+                    <div className="h-[40px] border-b border-sim-yellow flex items-center justify-center font-bold text-[8px] text-sim-yellow uppercase sticky top-0 bg-sim-dark z-10">SAAT</div>
                     <div className="flex-1">
                         {Array.from({ length: endHour - START_HOUR }).map((_, i) => (
                             <div key={i} className="border-b border-sim-border/10 flex items-center justify-center font-mono text-gray-600 text-[10px]" style={{ height: HOUR_HEIGHT }}>
@@ -343,7 +337,7 @@ function AppContent() {
                             <div className="relative flex-1 w-full" onDragOver={(e) => handleDragOver(e, seat.id)} onDrop={(e) => handleDrop(e, seat.id)}>
                                 <div className="absolute inset-0 z-10 cursor-default" onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); const y = e.clientY - e.currentTarget.getBoundingClientRect().top; setContextMenu({ visible: true, x: e.pageX, y: e.pageY, seatId: seat.id, time: minutesToTime(Math.floor(((START_HOUR * 60) + (y / HOUR_HEIGHT * 60)) / 30) * 30) }); }} />
                                 {dragTarget?.seatId === seat.id && (
-                                  <div className="absolute left-0 right-0 z-[80] border-4 border-dashed bg-green-500/30 border-green-400 shadow-2xl flex items-center justify-center text-2xl font-black text-green-400" style={getGridPosition(dragTarget.startTime, dragTarget.endTime, START_HOUR, endHour)}>
+                                  <div className="absolute left-0 right-0 z-[80] border-4 border-dashed bg-green-500/30 border-green-400 shadow-2xl flex items-center justify-center text-lg font-black text-green-400" style={getGridPosition(dragTarget.startTime, dragTarget.endTime, START_HOUR, endHour)}>
                                     {dragTarget.startTime} - {dragTarget.endTime}
                                   </div>
                                 )}
@@ -360,17 +354,17 @@ function AppContent() {
                                     if (isPast) styleKey = 'past';
                                     else if (isActive) styleKey = 'active';
                                     const colorKey = `${styleKey}${res.isPaid ? 'Paid' : 'Unpaid'}` as keyof typeof theme;
-                                    const color = theme[colorKey] as string;
+                                    const color = theme[colorKey] || '#444';
                                     return (
                                         <div 
                                           key={res.id} draggable={!isCtrlPressed} onDragStart={(e) => handleDragStart(e, res.id)} 
                                           onClick={(e) => { e.stopPropagation(); setSelectedIds([res.id]); }} 
                                           onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ visible: true, x: e.pageX, y: e.pageY, reservationId: res.id }); }}
-                                          className={`absolute left-0 right-0 rounded-sm overflow-hidden flex flex-col justify-center text-center p-1 transition-all border z-[50] ${selected ? 'ring-4 ring-white z-[90] shadow-2xl' : ''}`}
+                                          className={`absolute left-0 right-0 rounded-sm overflow-hidden flex flex-col justify-center text-center p-1 transition-all border z-[50] ${selected ? 'ring-2 ring-white z-[90] shadow-2xl scale-[1.02]' : ''}`}
                                           style={{ top: pos.top, height: pos.height, backgroundColor: color, borderColor: selected ? '#fff' : theme.border, opacity: theme.opacity }}
                                         >
-                                            <div className="text-[9px] font-black opacity-90 leading-none mb-0.5">{res.startTime}-{res.endTime}</div>
-                                            <div className="font-black text-[11px] truncate uppercase px-1">{res.name}</div>
+                                            <div className="text-[8px] font-black opacity-90 leading-none mb-0.5">{res.startTime}-{res.endTime}</div>
+                                            <div className="font-black text-[10px] truncate uppercase px-1">{res.name}</div>
                                         </div>
                                     );
                                 })}
@@ -405,21 +399,24 @@ function LoginScreen() {
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
+        // Fix: Use supabase.auth.signInWithPassword
         const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) alert('Hatalı giriş: ' + error.message);
+        if (error) alert('Giriş başarısız: ' + error.message);
         setLoading(false);
     };
     return (
         <div className="fixed inset-0 bg-sim-black flex items-center justify-center p-4">
-            <div className="w-full max-w-[400px] bg-sim-dark border border-sim-yellow/30 p-10 rounded-2xl shadow-2xl relative">
-                <div className="flex flex-col items-center mb-8">
-                    <img src="logo.png" alt="Logo" className="h-24 mb-4 object-contain" onError={(e) => (e.currentTarget.style.display = 'none')} />
-                    <h2 className="text-sim-yellow font-black text-xs tracking-widest uppercase">SimRacing Manager</h2>
+            <div className="w-full max-w-[380px] bg-sim-dark border border-sim-yellow/20 p-8 rounded-2xl shadow-2xl">
+                <div className="flex flex-col items-center mb-10">
+                    <div className="w-20 h-20 bg-sim-yellow/10 rounded-full flex items-center justify-center mb-4 border border-sim-yellow/20">
+                      <Loader2 size={32} className="text-sim-yellow" />
+                    </div>
+                    <h2 className="text-sim-yellow font-black text-sm tracking-[0.2em] uppercase">Sim Racing Manager</h2>
                 </div>
-                <form onSubmit={handleLogin} className="space-y-6">
-                    <div className="space-y-2"><label className="text-[10px] font-bold text-gray-500 uppercase">E-Posta</label><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="w-full bg-sim-black border border-sim-border rounded-xl p-4 text-white outline-none focus:border-sim-yellow" /></div>
-                    <div className="space-y-2"><label className="text-[10px] font-bold text-gray-500 uppercase">Şifre</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required className="w-full bg-sim-black border border-sim-border rounded-xl p-4 text-white outline-none focus:border-sim-yellow" /></div>
-                    <button type="submit" disabled={loading} className="w-full bg-sim-yellow text-black font-black py-4 rounded-xl text-xs uppercase shadow-lg shadow-yellow-500/20">{loading ? 'Giriş Yapılıyor...' : 'Giriş Yap'}</button>
+                <form onSubmit={handleLogin} className="space-y-5">
+                    <div className="space-y-1.5"><label className="text-[10px] font-bold text-gray-500 uppercase ml-1">E-Posta Adresi</label><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="w-full bg-sim-black border border-sim-border rounded-xl p-4 text-white outline-none focus:border-sim-yellow transition-colors" /></div>
+                    <div className="space-y-1.5"><label className="text-[10px] font-bold text-gray-500 uppercase ml-1">Şifre</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required className="w-full bg-sim-black border border-sim-border rounded-xl p-4 text-white outline-none focus:border-sim-yellow transition-colors" /></div>
+                    <button type="submit" disabled={loading} className="w-full bg-sim-yellow text-black font-black py-4 rounded-xl text-[10px] uppercase shadow-lg shadow-yellow-500/10 hover:bg-sim-yellowHover transition-all mt-4">{loading ? 'Giriş Yapılıyor...' : 'Yönetici Girişi'}</button>
                 </form>
             </div>
         </div>
