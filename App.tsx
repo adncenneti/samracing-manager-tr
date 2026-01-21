@@ -145,7 +145,14 @@ function AppContent() {
       }
 
       if (groupsResult.status === 'fulfilled' && groupsResult.value.data && groupsResult.value.data.length > 0) {
-        setSimulatorGroups(groupsResult.value.data);
+        // DB'den gelen snake_case veriyi camelCase'e dönüştür
+        const mappedGroups = groupsResult.value.data.map((g: any) => ({
+          id: g.id,
+          name: g.name,
+          seatCount: g.seat_count || g.seatCount || 8, // seat_count veritabanından, seatCount default'tan gelebilir
+          order: g.order
+        }));
+        setSimulatorGroups(mappedGroups);
       } else {
         // Eğer veritabanında grup tablosu yoksa veya boşsa varsayılanları koru
         console.warn("Simulator groups not found in DB, using defaults.");
@@ -179,9 +186,11 @@ function AppContent() {
     // Güvenlik kontrolü: simulatorGroups null/undefined ise boş dizi kullan
     (simulatorGroups || []).forEach(g => {
       if (!g) return;
-      const gs = generateSeats(g.seatCount || 8, g.id as any, idx, seatLabelPrefix);
+      // seatCount değerinin sayı olduğundan emin ol
+      const count = typeof g.seatCount === 'number' ? g.seatCount : 8;
+      const gs = generateSeats(count, g.id as any, idx, seatLabelPrefix);
       seats = [...seats, ...gs];
-      idx += (g.seatCount || 8);
+      idx += count;
     });
     return seats;
   }, [simulatorGroups, seatLabelPrefix]);
@@ -244,7 +253,7 @@ function AppContent() {
 
     const { error } = await supabase.from('reservations').insert(data.selectedSeats.map((sid: string) => ({
       group_id: gid, seat_id: sid, name: data.name, phone: data.phone,
-      start_time: data.startTime, end_time: data.endTime, is_paid: data.isPaid,
+      start_time: data.startTime, end_time: data.endTime, is_paid: data.is_paid, // Düzeltme: is_paid (snake_case)
       created_at: Date.now(), date: dateStr, user_id: session?.user?.id
     })));
 
