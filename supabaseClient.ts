@@ -1,7 +1,6 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-// Ortam değişkenlerine güvenli erişim (Environment Agnostic)
 const getEnv = (key: string) => {
   try {
     // @ts-ignore
@@ -22,11 +21,16 @@ const getEnv = (key: string) => {
   return '';
 };
 
-// Değerleri al veya varsayılan güvenli değerlere düş
 const rawUrl = getEnv('SUPABASE_URL') || getEnv('VITE_SUPABASE_URL');
 const rawKey = getEnv('API_KEY') || getEnv('VITE_SUPABASE_ANON_KEY');
 
-// URL'in geçerli olup olmadığını kontrol et
+if (!rawUrl || rawUrl.includes('placeholder')) {
+  console.error("CRITICAL: SUPABASE_URL eksik veya geçersiz!");
+}
+if (!rawKey || rawKey === 'placeholder') {
+  console.error("CRITICAL: SUPABASE_ANON_KEY eksik veya geçersiz!");
+}
+
 const isValidUrl = (urlString: string) => {
   try { 
     return Boolean(new URL(urlString)); 
