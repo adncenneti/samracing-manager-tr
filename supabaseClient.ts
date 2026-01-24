@@ -1,39 +1,42 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-// Güvenli ortam değişkeni alma fonksiyonu
+// Güvenli ortam değişkeni okuyucu
 const getEnvValue = (key: string): string => {
-  // @ts-ignore
-  if (typeof process !== 'undefined' && process.env && process.env[key]) {
+  try {
     // @ts-ignore
-    return process.env[key];
-  }
-  // @ts-ignore
-  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
+    if (typeof process !== 'undefined' && process.env && process.env[key]) {
+      // @ts-ignore
+      return process.env[key];
+    }
     // @ts-ignore
-    return import.meta.env[key];
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
+      // @ts-ignore
+      return import.meta.env[key];
+    }
+  } catch (e) {
+    console.warn('Env okuma hatası:', e);
   }
   return '';
 };
 
-const supabaseUrl = getEnvValue('SUPABASE_URL') || getEnvValue('VITE_SUPABASE_URL') || '';
-const supabaseAnonKey = getEnvValue('API_KEY') || getEnvValue('VITE_SUPABASE_ANON_KEY') || '';
+const url = getEnvValue('SUPABASE_URL') || getEnvValue('VITE_SUPABASE_URL');
+const key = getEnvValue('API_KEY') || getEnvValue('VITE_SUPABASE_ANON_KEY');
 
-// URL geçerlilik kontrolü
-const isValidUrl = (url: string) => {
-  try {
-    return url.startsWith('http');
-  } catch {
-    return false;
-  }
+const isValidUrl = (urlString: string) => {
+    try { 
+      return urlString && urlString.startsWith('http'); 
+    } catch { 
+      return false; 
+    }
 };
 
-if (!isValidUrl(supabaseUrl)) {
-  console.error("Supabase URL ayarlanmamış veya geçersiz! Lütfen ayarları kontrol edin.");
+// Eğer URL geçersizse placeholder kullanarak uygulamanın çökmesini engelle
+const finalUrl = isValidUrl(url) ? url : 'sb_publishable__ZUXekM5cAMTK69I30K6yw_PCwPgqi3';
+const finalKey = key || 'sb_secret_qKDjbBrv62OzbffCz-kiKw__4IXZJCL';
+
+if (!isValidUrl(url)) {
+  console.warn("Supabase URL'i bulunamadı veya geçersiz. Uygulama demo/offline modda çalışabilir.");
 }
 
-// Boş değerler durumunda çökmemesi için placeholder kullanıyoruz
-export const supabase = createClient(
-  isValidUrl(supabaseUrl) ? supabaseUrl : 'sb_publishable__ZUXekM5cAMTK69I30K6yw_PCwPgqi3',
-  supabaseAnonKey || 'sb_secret_qKDjbBrv62OzbffCz-kiKw__4IXZJCL'
-);
+export const supabase = createClient(finalUrl, finalKey);

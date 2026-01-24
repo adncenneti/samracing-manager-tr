@@ -7,81 +7,53 @@
     <title>SimRacing Manager</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Global Error Handler: React yüklenmeden çökerse hatayı gösterir -->
     <script>
-      // Global process object polyfill to prevent crashes in some environments
+      window.onerror = function(message, source, lineno, colno, error) {
+        document.body.innerHTML = '<div style="color:red; padding:20px; background:#111; height:100vh;"><h1>Sistem Başlatma Hatası</h1><p>'+message+'</p><pre>'+source+':'+lineno+'</pre></div>';
+      };
+      // Process Polyfill
       window.process = { env: {} };
       
       tailwind.config = {
         theme: {
           extend: {
-            fontFamily: {
-              sans: ['Inter', 'sans-serif'],
-            },
+            fontFamily: { sans: ['Inter', 'sans-serif'] },
             colors: {
               sim: {
-                black: '#0a0a0a',
-                dark: '#121212',
-                gray: '#1e1e1e',
-                border: '#333333',
-                yellow: '#fbbf24', 
-                yellowHover: '#f59e0b',
-                text: '#e5e5e5',
-                muted: '#a3a3a3'
-              }
-            },
-            animation: {
-              'pulse-fast': 'pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-              'glow-green': 'glowGreen 2s infinite ease-in-out',
-            },
-            keyframes: {
-              glowGreen: {
-                '0%, 100%': { boxShadow: '0 0 5px rgba(34, 197, 94, 0.4), 0 0 10px rgba(34, 197, 94, 0.2)' },
-                '50%': { boxShadow: '0 0 20px rgba(34, 197, 94, 0.8), 0 0 30px rgba(34, 197, 94, 0.4)' },
+                black: '#0a0a0a', dark: '#121212', gray: '#1e1e1e',
+                border: '#333333', yellow: '#fbbf24', yellowHover: '#f59e0b',
+                text: '#e5e5e5', muted: '#a3a3a3'
               }
             }
           }
         }
       }
     </script>
+
     <style>
-      body {
-        background-color: #0a0a0a;
-        color: #e5e5e5;
-        overflow: hidden;
-        margin: 0;
-      }
-      #root {
-        height: 100vh;
-        width: 100vw;
-      }
-      ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
-      }
-      ::-webkit-scrollbar-track {
-        background: #121212;
-      }
-      ::-webkit-scrollbar-thumb {
-        background: #333;
-        border-radius: 4px;
-      }
-      ::-webkit-scrollbar-thumb:hover {
-        background: #fbbf24;
-      }
+      body { background-color: #0a0a0a; color: #e5e5e5; overflow: hidden; margin: 0; }
+      #root { height: 100vh; width: 100vw; }
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: #121212; }
+      ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: #fbbf24; }
     </style>
-  <script type="importmap">
+
+    <!-- STABIL IMPORT MAP (React 18 & ESM.SH) -->
+    <script type="importmap">
 {
   "imports": {
-    "react/": "https://aistudiocdn.com/react@^19.2.1/",
-    "react": "https://aistudiocdn.com/react@^19.2.1",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
-    "react-dom": "https://aistudiocdn.com/react-dom@^19.2.1",
-    "date-fns/": "https://aistudiocdn.com/date-fns@^4.1.0/",
-    "date-fns": "https://aistudiocdn.com/date-fns@^4.1.0",
-    "date-fns/locale": "https://aistudiocdn.com/date-fns@^4.1.0/locale",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.556.0",
-    "xlsx": "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm",
-    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@^2.90.1"
+    "react": "https://esm.sh/react@18.2.0",
+    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+    "react-dom": "https://esm.sh/react-dom@18.2.0",
+    "date-fns": "https://esm.sh/date-fns@3.6.0",
+    "lucide-react": "https://esm.sh/lucide-react@0.263.1",
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.39.3",
+    "xlsx": "https://esm.sh/xlsx@0.18.5",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/"
   }
 }
 </script>
