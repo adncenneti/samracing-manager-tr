@@ -1,11 +1,16 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { addDays, isSameDay } from 'date-fns';
+import { format, addDays, isSameDay, startOfMonth, endOfMonth, isBefore, isAfter, parseISO } from 'date-fns';
+import { tr } from 'date-fns/locale';
 import { 
-  Plus, Settings, AlertOctagon, Loader2, Clock, ChevronLeft, ChevronRight
+  Calendar, ChevronLeft, ChevronRight, Plus, Trash, Save, Edit3, 
+  MousePointer2, FileSpreadsheet, AlertOctagon, Clock, Coins, Ban, 
+  Users, Image as ImageIcon, MousePointerSquareDashed, Settings, 
+  Minus, Repeat, CheckCircle2, UserPlus, LogOut, Lock, Mail, Loader2,
+  Check, Trash2
 } from 'lucide-react';
-import { Reservation, Seat, ContextMenuState, BlacklistEntry, SimulatorGroup } from './types';
-import { generateSeats, checkOverlap, getGridPosition, START_HOUR, DEFAULT_END_HOUR, timeToMinutes, minutesToTime } from './utils';
+import { Reservation, SimulatorType, Seat, ContextMenuState, BlacklistEntry, SimulatorGroup } from './types';
+import { generateSeats, checkOverlap, getGridPosition, START_HOUR, DEFAULT_END_HOUR, timeToMinutes, minutesToTime, formatPhoneNumber } from './utils';
 import { ReservationModal } from './components/ReservationModal';
 import { ContextMenu } from './components/ContextMenu';
 import { BlacklistModal } from './components/BlacklistModal';
@@ -13,81 +18,25 @@ import { SettingsModal } from './components/SettingsModal';
 import { InfoModal } from './components/InfoModal';
 import { supabase } from './supabaseClient';
 
-// RADİKAL ÇÖZÜM: TypeScript hatalarını baypas etmek için 'any' kullanımı.
-// Bu, uygulamanın derleme hatası vermeden çalışmasını garanti eder.
-class ErrorBoundary extends React.Component<any, any> {
-  constructor(props: any) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-  static getDerivedStateFromError(error: any) { return { hasError: true, error }; }
-  componentDidCatch(error: any, errorInfo: any) { 
-    console.error("KRİTİK HATA:", error, errorInfo); 
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="fixed inset-0 bg-black flex flex-col items-center justify-center text-red-500 p-8 text-center z-[9999]">
-          <AlertOctagon size={48} className="mb-4" />
-          <h1 className="text-2xl font-bold mb-2">Sistem Hatası</h1>
-          <p className="text-gray-400 mb-6">{this.state.error?.message || 'Beklenmedik bir sorun oluştu.'}</p>
-          <button 
-            onClick={() => window.location.reload()} 
-            className="px-6 py-3 bg-red-600 text-white rounded hover:bg-red-700 transition-colors font-bold uppercase"
-          >
-            Sistemi Yeniden Başlat
-          </button>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-
+const SCREENSAVER_TIMEOUT = 10 * 60 * 1000;
 const HOUR_HEIGHT = 60;
 const HEADER_HEIGHT = 40;
 
-const THEME = {
-  border: '#333333',
-  main: '#fbbf24',
-  timeline: '#fbbf24',
-  pastUnpaid: '#454545',
-  pastPaid: '#064e3b',
-  activeUnpaid: '#dc2626',
-  activePaid: '#059669',
-  futureUnpaid: '#1e1e1e',
-  futurePaid: '#065f46',
-  opacity: '0.9'
-};
-
 const DEFAULT_GROUPS: SimulatorGroup[] = [
-  { id: 'LOGITECH', name: 'Logitech G29', seatCount: 8, order: 0 },
-  { id: 'MOZA', name: 'Moza R5', seatCount: 8, order: 1 }
+    { id: 'LOGITECH', name: 'Logitech G29', seatCount: 8, order: 0 },
+    { id: 'MOZA', name: 'Moza R5', seatCount: 8, order: 1 }
 ];
 
-// Manuel Tarih Formatlayıcı (Kütüphane bağımlılığını kaldırmak için)
-const formatDateTR = (date: Date, type: 'full' | 'day' | 'time' = 'full') => {
-  const days = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
-  const months = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
-  
-  if (type === 'day') return days[date.getDay()];
-  if (type === 'time') return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-  
-  return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
-};
-
-// YYYY-MM-DD formatlayıcı
-const formatDateISO = (date: Date) => {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-};
-
-function AppContent() {
+export default function App() {
   const [session, setSession] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [showScreensaver, setShowScreensaver] = useState(false);
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [currentDate, setCurrentDate] = useState(new Date());
   const [now, setNow] = useState(new Date());
   
-  const [simulatorGroups, setSimulatorGroups] = useState<SimulatorGroup[]>(DEFAULT_GROUPS);
+  const [simulatorGroups, setSimulatorGroups] = useState<SimulatorGroup[]>([]);
   const [view, setView] = useState<string>('LOGITECH');
   
   const [reservations, setReservations] = useState<Reservation[]>([]);
@@ -102,82 +51,72 @@ function AppContent() {
   
   const [infoData, setInfoData] = useState<any>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ visible: false, x: 0, y: 0 });
+  
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [draggedResId, setDraggedResId] = useState<string | null>(null);
   const [dragTarget, setDragTarget] = useState<{ seatId: string, startTime: string, endTime: string, isValid: boolean } | null>(null);
   
   const [isCtrlPressed, setIsCtrlPressed] = useState(false);
+  const [isGroupMode, setIsGroupMode] = useState(false);
+
   const dateInputRef = useRef<HTMLInputElement>(null);
-  const dateStr = formatDateISO(currentDate);
+  const dateStr = format(currentDate, 'yyyy-MM-dd');
+  const [editForm, setEditForm] = useState({ name: '', phone: '', startTime: '', endTime: '', isPaid: false, seatId: '' });
+  const [activeEditingIds, setActiveEditingIds] = useState<string[]>([]);
 
-  // Auth Init
   useEffect(() => {
-    let mounted = true;
-    const initAuth = async () => {
-      try {
-        // Supabase fail olsa bile uygulamanın açılmasını sağla
-        const { data, error } = await supabase.auth.getSession();
-        if (error) console.warn("Auth check failed (offline mode?)", error);
-        
-        if (mounted) {
-          setSession(data?.session || null);
-          setAuthLoading(false);
-        }
-      } catch (err) {
-        console.error("Critical Auth Error:", err);
-        if (mounted) setAuthLoading(false);
-      }
-    };
-    initAuth();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (mounted) setSession(session);
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setAuthLoading(false);
     });
-
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+    return () => subscription.unsubscribe();
   }, []);
 
-  // Data Fetch
+  const mapReservation = useCallback((r: any): Reservation => ({
+    id: r.id,
+    groupId: r.group_id,
+    seatId: r.seat_id,
+    name: r.name,
+    phone: r.phone,
+    startTime: r.start_time,
+    endTime: r.end_time,
+    isPaid: r.is_paid,
+    createdAt: Number(r.created_at),
+    date: r.date
+  }), []);
+
   const fetchData = useCallback(async () => {
     if (!session) return;
     try {
-      const [resResult, blResult, groupsResult] = await Promise.allSettled([
+      const [resResponse, blResponse, groupsResponse] = await Promise.all([
         supabase.from('reservations').select('*'),
         supabase.from('blacklist').select('*'),
         supabase.from('simulator_groups').select('*').order('order', { ascending: true })
       ]);
-
-      if (resResult.status === 'fulfilled' && resResult.value.data) {
-        setReservations(resResult.value.data.map(r => ({
-          id: r.id, groupId: r.group_id, seatId: r.seat_id, name: r.name,
-          phone: r.phone, startTime: r.start_time, endTime: r.end_time,
-          isPaid: r.is_paid, createdAt: Number(r.created_at || Date.now()), date: r.date
-        })));
+      if (resResponse.data) setReservations(resResponse.data.map(mapReservation));
+      if (blResponse.data) setBlacklist(blResponse.data.map(b => ({
+        id: b.id, phone: b.phone, reason: b.reason, name: b.name, addedAt: Number(b.added_at)
+      })));
+      if (groupsResponse.data && groupsResponse.data.length > 0) {
+        setSimulatorGroups(groupsResponse.data);
+      } else if (simulatorGroups.length === 0) {
+        setSimulatorGroups(DEFAULT_GROUPS);
       }
-
-      if (blResult.status === 'fulfilled' && blResult.value.data) {
-        setBlacklist(blResult.value.data);
-      }
-
-      if (groupsResult.status === 'fulfilled' && groupsResult.value.data && groupsResult.value.data.length > 0) {
-        const mapped = groupsResult.value.data.map((g: any) => ({
-          id: g.id,
-          name: g.name,
-          seatCount: Number(g.seat_count || g.seatCount || 8),
-          order: Number(g.order || 0)
-        }));
-        setSimulatorGroups(mapped);
-      }
-    } catch (e) { console.error("Data fetch error:", e); }
-  }, [session]);
+    } catch (error) {
+      console.error("Data fetch error:", error);
+    }
+  }, [session, mapReservation]);
 
   useEffect(() => {
-    if (session) fetchData();
-    const interval = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(interval);
+    if (!session) return;
+    fetchData();
+    const resChannel = supabase.channel('realtime-reservations')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reservations' }, () => fetchData())
+      .subscribe();
+    return () => { supabase.removeChannel(resChannel); };
   }, [session, fetchData]);
 
   useEffect(() => {
@@ -191,291 +130,427 @@ function AppContent() {
     };
   }, []);
 
-  const allSeats = useMemo(() => {
-    let seats: Seat[] = [];
-    let idx = 1;
-    (simulatorGroups || DEFAULT_GROUPS).forEach(g => {
-      const count = Number(g.seatCount) || 8;
-      const gs = generateSeats(count, g.id as any, idx, seatLabelPrefix);
-      seats = [...seats, ...gs];
-      idx += count;
+  useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (selectedIds.length === 0) {
+      setEditForm({ name: '', phone: '', startTime: '', endTime: '', isPaid: false, seatId: '' });
+      setActiveEditingIds([]);
+      setIsGroupMode(false);
+      return;
+    }
+    const selectionChanged = JSON.stringify(selectedIds.sort()) !== JSON.stringify(activeEditingIds.sort());
+    if (selectionChanged) {
+      const selectedReservations = reservations.filter(r => selectedIds.includes(r.id));
+      if (selectedReservations.length > 0) {
+        const firstRes = selectedReservations[0];
+        const isActuallyNewSelection = selectedIds.length === 1 && !activeEditingIds.includes(selectedIds[0]);
+        if (isActuallyNewSelection || activeEditingIds.length === 0) {
+          const isSameName = selectedReservations.every(r => r.name === firstRes.name);
+          const isSamePhone = selectedReservations.every(r => r.phone === firstRes.phone);
+          const isSamePaid = selectedReservations.every(r => r.isPaid === firstRes.isPaid);
+          setEditForm({ 
+            name: isSameName ? firstRes.name : '', 
+            phone: isSamePhone ? firstRes.phone : '', 
+            startTime: firstRes.startTime, 
+            endTime: firstRes.endTime, 
+            isPaid: isSamePaid ? firstRes.isPaid : false, 
+            seatId: selectedIds.length === 1 ? firstRes.seatId : '' 
+          });
+        }
+        setActiveEditingIds([...selectedIds]);
+      }
+    }
+  }, [selectedIds, reservations, activeEditingIds]);
+
+  const seatsList = useMemo(() => {
+    let allSeats: Seat[] = [];
+    let currentIndex = 1;
+    simulatorGroups.forEach(group => {
+        const groupSeats = generateSeats(group.seatCount, group.id as any, currentIndex, seatLabelPrefix);
+        allSeats = [...allSeats, ...groupSeats];
+        currentIndex += group.seatCount;
     });
-    return seats;
+    return allSeats;
   }, [simulatorGroups, seatLabelPrefix]);
 
-  const currentViewSeats = useMemo(() => allSeats.filter(s => s.type === view), [allSeats, view]);
+  const currentViewSeats = seatsList.filter(s => s.type === view);
+  const totalHours = endHour - START_HOUR;
+  const totalContentHeight = (totalHours * HOUR_HEIGHT) + HEADER_HEIGHT;
 
   const handleDragStart = (e: React.DragEvent, id: string) => {
     if (isCtrlPressed) { e.preventDefault(); return; }
+    e.dataTransfer.setData('text/plain', id);
     setDraggedResId(id);
+    setSelectedIds([]); 
+    // Opacity effect for visual clarity
+    (e.target as HTMLElement).style.opacity = '0.4';
   };
 
-  const handleDragOver = (e: React.DragEvent, seatId: string) => {
+  const handleDragEnd = (e: React.DragEvent) => {
+    setDraggedResId(null);
+    setDragTarget(null);
+    (e.target as HTMLElement).style.opacity = '1';
+  };
+
+  const handleDragOver = useCallback((e: React.DragEvent, seatId: string) => {
     e.preventDefault();
     if (!draggedResId) return;
     const res = reservations.find(r => r.id === draggedResId);
     if (!res) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    
-    // Grid alignment logic
-    const startMins = Math.round(((START_HOUR * 60) + (y / HOUR_HEIGHT * 60)) / 5) * 5;
-    const dur = timeToMinutes(res.endTime) - timeToMinutes(res.startTime);
-    const s = minutesToTime(Math.max(START_HOUR * 60, Math.min((endHour * 60) - dur, startMins)));
-    const end = minutesToTime(timeToMinutes(s) + dur);
-    
-    const overlap = checkOverlap(s, end, reservations.filter(r => r.seatId === seatId && r.date === dateStr), draggedResId);
-    setDragTarget({ seatId, startTime: s, endTime: end, isValid: !overlap });
-  };
+    const relY = e.clientY - rect.top;
+    const startMins = Math.round(((START_HOUR * 60) + (relY / HOUR_HEIGHT * 60)) / 5) * 5;
+    const duration = timeToMinutes(res.endTime) - timeToMinutes(res.startTime);
+    const clampedStart = Math.max(START_HOUR * 60, Math.min((endHour * 60) - duration, startMins));
+    const newS = minutesToTime(clampedStart);
+    const newE = minutesToTime(clampedStart + duration);
+    const dayReservations = reservations.filter(r => r.seatId === seatId && r.date === dateStr);
+    const overlap = checkOverlap(newS, newE, dayReservations, draggedResId);
+    setDragTarget({ seatId, startTime: newS, endTime: newE, isValid: !overlap });
+  }, [draggedResId, reservations, endHour, dateStr]);
 
   const handleDrop = async (e: React.DragEvent, targetId: string) => {
     e.preventDefault();
-    if (dragTarget?.isValid && draggedResId) {
-      const { error } = await supabase.from('reservations').update({
-        seat_id: targetId, start_time: dragTarget.startTime, end_time: dragTarget.endTime
-      }).eq('id', draggedResId);
-      
-      if (!error) {
-        setReservations(prev => prev.map(r => r.id === draggedResId ? {...r, seatId: targetId, startTime: dragTarget.startTime, endTime: dragTarget.endTime} : r));
-      } else {
-        alert("Güncelleme hatası: " + error.message);
-      }
-    }
+    const currentDraggedId = draggedResId;
+    const currentDragTarget = dragTarget;
     setDraggedResId(null);
     setDragTarget(null);
-    fetchData(); // Sync with server
+    if (currentDragTarget?.isValid && currentDraggedId) {
+      try {
+        await supabase.from('reservations').update({
+          seat_id: targetId,
+          start_time: currentDragTarget.startTime,
+          end_time: currentDragTarget.endTime
+        }).eq('id', currentDraggedId);
+      } catch (err) { console.error("Update error:", err); }
+    }
   };
 
-  const finalizeReservation = async (data: any) => {
-    const overlapping = data.selectedSeats.some((sid: string) => 
-      checkOverlap(data.startTime, data.endTime, reservations.filter(r => r.seatId === sid && r.date === dateStr), data.id)
-    );
-    if (overlapping) {
-      alert("Seçilen saatler dolu! Lütfen kontrol ediniz.");
-      return;
-    }
+  const handleSaveEdit = async () => {
+    if (selectedIds.length === 0) return;
+    try {
+      await Promise.all(selectedIds.map(id => {
+        const payload: any = {
+            name: editForm.name, phone: editForm.phone,
+            start_time: editForm.startTime, end_time: editForm.endTime,
+            is_paid: editForm.isPaid
+        };
+        if (!isGroupMode && selectedIds.length === 1 && editForm.seatId) {
+            payload.seat_id = editForm.seatId;
+        }
+        return supabase.from('reservations').update(payload).eq('id', id);
+      }));
+      alert("Güncellendi.");
+    } catch (e) { console.error(e); }
+  };
 
-    if (data.id) {
-       const { error } = await supabase.from('reservations').update({
-         name: data.name, phone: data.phone, start_time: data.startTime, end_time: data.endTime, is_paid: data.isPaid
-       }).eq('id', data.id);
-       if (error) alert("Hata: " + error.message);
+  const handleSelection = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (isCtrlPressed) {
+      setSelectedIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]);
     } else {
-       const gid = Math.random().toString(36).substr(2, 9);
-       const { error } = await supabase.from('reservations').insert(data.selectedSeats.map((sid: string) => ({
-         group_id: gid, seat_id: sid, name: data.name, phone: data.phone,
-         start_time: data.startTime, end_time: data.endTime, is_paid: data.isPaid,
-         created_at: Date.now(), date: dateStr, user_id: session?.user?.id
-       })));
-       if (error) alert("Hata: " + error.message);
+      setSelectedIds([id]);
     }
-    fetchData();
-    setIsModalOpen(false);
   };
 
-  const handleAddToBlacklist = async (data: any) => {
-     if(!data.phone) return;
-     if(!confirm(`${data.name} (${data.phone}) kara listeye eklensin mi?`)) return;
-     const { error } = await supabase.from('blacklist').insert({
-        phone: data.phone, name: data.name, reason: 'Manuel Eklendi', added_at: Date.now()
-     });
-     if(error) alert('Hata: ' + error.message);
-     else {
-        alert('Eklendi.');
-        fetchData();
-        setIsModalOpen(false);
-     }
+  const handleGroupSeatToggle = async (targetSeatId: string) => {
+    const refRes = reservations.find(r => r.id === selectedIds[0]);
+    if (!refRes) return;
+    const existingRes = reservations.find(r => r.groupId === refRes.groupId && r.date === refRes.date && r.seatId === targetSeatId);
+    if (existingRes) {
+        // Fix: Removed warning for removing last item, let user manage as they wish
+        await supabase.from('reservations').delete().eq('id', existingRes.id);
+        setSelectedIds(prev => prev.filter(id => id !== existingRes.id));
+    } else {
+        if (checkOverlap(editForm.startTime, editForm.endTime, reservations.filter(r => r.seatId === targetSeatId && r.date === dateStr))) {
+            alert("Masa dolu!"); return;
+        }
+        const { data } = await supabase.from('reservations').insert({
+            group_id: refRes.groupId, seat_id: targetSeatId, name: editForm.name || refRes.name,
+            phone: editForm.phone || refRes.phone, start_time: editForm.startTime, end_time: editForm.endTime,
+            is_paid: editForm.isPaid, created_at: Date.now(), date: dateStr, user_id: session.user.id
+        }).select();
+        if (data) setSelectedIds(prev => [...prev, data[0].id]);
+    }
+  };
+
+  const handleSelectGroup = () => {
+    const currentRes = reservations.find(r => r.id === selectedIds[0]);
+    if (!currentRes) return;
+    const group = reservations.filter(r => r.groupId === currentRes.groupId && r.date === currentRes.date);
+    setSelectedIds(group.map(r => r.id));
   };
 
   const handleCleanDay = async () => {
-    if (!confirm(`${formatDateTR(currentDate)} tarihindeki tüm kayıtları silmek istediğinize emin misiniz?`)) return;
-    await supabase.from('reservations').delete().eq('date', dateStr);
-    fetchData();
+      if(!confirm(`${dateStr} tarihindeki TÜM randevular silinecek. Emin misiniz?`)) return;
+      if(!confirm(`GERÇEKTEN EMİN MİSİNİZ? Bu işlem geri alınamaz.`)) return;
+      await supabase.from('reservations').delete().eq('date', dateStr);
+      fetchData();
   };
 
-  const handleCleanMonth = async () => {};
+  const handleCleanMonth = async () => {
+      if(!confirm(`Mevcut ayın (Bugün hariç geçmiş tüm günler) verileri temizlenecek. Emin misiniz?`)) return;
+      if(!confirm(`SON UYARI: Veriler kalıcı olarak silinecek.`)) return;
+      
+      const start = format(startOfMonth(new Date()), 'yyyy-MM-dd');
+      const today = format(new Date(), 'yyyy-MM-dd');
+      
+      await supabase.from('reservations').delete().gte('date', start).lt('date', today);
+      fetchData();
+  };
+
+  const finalizeReservation = async (data: any) => {
+    const gid = Math.random().toString(36).substr(2, 9);
+    await supabase.from('reservations').insert(data.selectedSeats.map((sid: string) => ({
+        group_id: gid, seat_id: sid, name: data.name, phone: data.phone,
+        start_time: data.startTime, end_time: data.endTime, is_paid: data.isPaid,
+        created_at: Date.now(), date: dateStr, user_id: session.user.id
+    })));
+    setIsModalOpen(false);
+  };
+
+  const handleLogout = async () => { await supabase.auth.signOut(); };
 
   if (authLoading) return <div className="fixed inset-0 bg-sim-black flex items-center justify-center text-sim-yellow"><Loader2 className="animate-spin" size={48}/></div>;
   if (!session) return <LoginScreen />;
-
-  // Timeline position calc
-  // (CurrentMins - StartMins) / TotalMins * TotalHeight
-  // Top offset = HeaderHeight (40)
-  const totalMins = (endHour - START_HOUR) * 60;
-  const currentMins = now.getHours() * 60 + now.getMinutes();
-  const startMins = START_HOUR * 60;
-  const timelineTop = HEADER_HEIGHT + ((currentMins - startMins) / totalMins) * ((endHour - START_HOUR) * HOUR_HEIGHT);
+  if (showScreensaver) return <div className="fixed inset-0 z-[9999] bg-black flex items-center justify-center" onMouseMove={resetIdleTimer}><video src="/screensaver.mp4" autoPlay loop muted className="w-full h-full object-cover" /></div>;
 
   return (
-    <div className="fixed inset-0 bg-sim-black flex items-center justify-center p-[2vh_2vw]">
-      <div className="h-full w-full flex flex-col bg-sim-dark border-4 rounded-xl shadow-2xl relative" style={{ borderColor: THEME.main }} onClick={() => setSelectedIds([])}>
+    <div className="fixed inset-0 bg-sim-black overflow-hidden flex items-center justify-center p-[5vh_5vw]">
+      <div className="w-full h-full flex bg-sim-dark border-4 border-sim-yellow rounded-xl shadow-2xl overflow-hidden relative" onClick={() => setSelectedIds([])}>
         
-        {/* HEADER */}
-        <header className="flex items-center justify-between px-6 py-4 border-b border-sim-border bg-[#121212] shrink-0 z-[70]">
-          <div className="flex items-center gap-8">
-            <div className="h-12 w-12 bg-sim-yellow/10 rounded-lg flex items-center justify-center border border-sim-yellow/30">
-              <Clock className="text-sim-yellow" size={24} />
-            </div>
-            <div className="flex items-center gap-1">
-              <button onClick={(e) => {e.stopPropagation(); setCurrentDate(prev => addDays(prev, -1))}} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-sim-yellow rounded-full transition-colors"><ChevronLeft size={20}/></button>
-              <div onClick={(e) => {e.stopPropagation(); dateInputRef.current?.showPicker()}} className="flex flex-col items-center px-4 cursor-pointer group relative">
-                <div className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">{formatDateTR(currentDate, 'day')}</div>
-                <div className="text-sm font-medium text-gray-200 tracking-tight">{formatDateTR(currentDate, 'full')}</div>
-                <input ref={dateInputRef} type="date" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => setCurrentDate(new Date(e.target.value))} value={dateStr} />
-              </div>
-              <button onClick={(e) => {e.stopPropagation(); setCurrentDate(prev => addDays(prev, 1))}} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-sim-yellow rounded-full transition-colors"><ChevronRight size={20}/></button>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-             <button onClick={() => setIsSettingsModalOpen(true)} className="p-2 text-sim-yellow hover:bg-sim-yellow/10 rounded-lg transition-colors border border-sim-yellow/20"><Settings size={20} /></button>
-             <button onClick={() => setIsBlacklistOpen(true)} className="p-2 text-sim-yellow hover:bg-sim-yellow/10 rounded-lg transition-colors border border-sim-yellow/20"><AlertOctagon size={20} /></button>
-             <div className="flex bg-sim-black p-1 rounded-lg border border-sim-border">
-                {simulatorGroups.map(g => (
-                  <button key={g.id} onClick={(e) => {e.stopPropagation(); setView(g.id)}} className={`px-4 py-1.5 rounded-md font-bold text-[10px] uppercase transition-all ${view === g.id ? 'bg-sim-yellow text-black' : 'text-gray-500 hover:text-gray-300'}`}>{g.name}</button>
-                ))}
-             </div>
-             <button onClick={() => { setInfoData(null); setIsModalOpen(true); }} className="bg-sim-yellow text-black px-6 py-2.5 rounded-lg font-black text-xs uppercase shadow-lg active:scale-95 transition-all flex items-center gap-2"><Plus size={14}/> Yeni Randevu</button>
-          </div>
-        </header>
-
-        {/* MAIN CONTENT */}
-        <div className="flex-1 overflow-auto bg-sim-black relative">
-           <div className="flex relative" style={{ height: (endHour - START_HOUR) * HOUR_HEIGHT + HEADER_HEIGHT }}>
-              
-              {/* TIMELINE CURSOR */}
-              {isSameDay(currentDate, now) && (
-                 <div className="absolute left-0 right-0 border-b-2 z-[60] pointer-events-none transition-all duration-1000 ease-linear" style={{ 
-                   top: timelineTop,
-                   borderColor: THEME.timeline
-                 }}>
-                   <div className="absolute bottom-0 right-2 bg-sim-yellow text-black text-[10px] font-black px-2 py-1 rounded shadow-lg">
-                      {formatDateTR(now, 'time')}
-                   </div>
-                 </div>
-              )}
-
-              {/* TIME COLUMN */}
-              <div className="w-16 bg-sim-dark border-r border-sim-border flex flex-col sticky left-0 z-[65]">
-                <div className="h-[40px] flex items-center justify-center text-[8px] font-bold text-sim-yellow border-b border-sim-yellow sticky top-0 bg-sim-dark z-20">SAAT</div>
-                <div className="flex-1">
-                  {Array.from({ length: endHour - START_HOUR }).map((_, i) => (
-                    <div key={i} className="border-b border-sim-border/10 flex items-center justify-center font-mono text-[10px] text-gray-600" style={{ height: HOUR_HEIGHT }}>
-                      {`${(START_HOUR + i) % 24}:00`.padStart(5, '0')}
-                    </div>
-                  ))}
+        <div className="flex-1 flex flex-col min-w-0 border-r border-sim-border">
+          <header className="flex items-center justify-between px-6 py-4 border-b border-sim-border bg-[#121212] shrink-0 z-[70]">
+            <div className="flex items-center gap-8">
+                <div className="h-20 w-28 flex items-center justify-center relative group/logo cursor-pointer">
+                    <div className="absolute inset-0 bg-sim-yellow/0 rounded-full blur-2xl group-hover/logo:bg-sim-yellow/30 transition-all duration-500 scale-75 group-hover/logo:scale-110"></div>
+                    <img src="/logo.png" alt="Logo" className="w-full h-full object-contain relative z-10 transition-transform duration-500 group-hover/logo:scale-105" />
                 </div>
-              </div>
+                <div className="flex items-center gap-1">
+                    <button onClick={(e) => {e.stopPropagation(); setCurrentDate(prev => addDays(prev, -1))}} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-sim-yellow rounded-full transition-all"><ChevronLeft size={16}/></button>
+                    <div onClick={(e) => {e.stopPropagation(); dateInputRef.current?.showPicker()}} className="flex flex-col items-center px-4 cursor-pointer group relative">
+                        <span className="text-[10px] text-gray-500 uppercase font-bold tracking-widest group-hover:text-sim-yellow transition-colors">{format(currentDate, 'EEEE', { locale: tr })}</span>
+                        <span className="text-sm font-medium text-gray-200 tracking-tight">{format(currentDate, 'dd MMMM yyyy', { locale: tr })}</span>
+                        <input ref={dateInputRef} type="date" onChange={(e) => setCurrentDate(new Date(e.target.value))} value={dateStr} className="absolute inset-0 opacity-0 cursor-pointer pointer-events-auto" />
+                    </div>
+                    <button onClick={(e) => {e.stopPropagation(); setCurrentDate(prev => addDays(prev, 1))}} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-sim-yellow rounded-full transition-all"><ChevronRight size={16}/></button>
+                </div>
+            </div>
 
-              {/* SEATS GRID */}
-              <div className="flex-1 flex min-w-[1000px] relative">
-                {currentViewSeats.map(seat => (
-                  <div key={seat.id} className="flex-1 border-r border-sim-border/20 flex flex-col relative">
-                    <div className="h-[40px] flex items-center justify-center font-black text-sim-yellow border-b border-sim-yellow text-[10px] uppercase bg-sim-black/90 sticky top-0 z-[60]">{seat.label}</div>
-                    
-                    <div className="flex-1 relative w-full" 
-                         onDragOver={(e) => handleDragOver(e, seat.id)} 
-                         onDrop={(e) => handleDrop(e, seat.id)}
-                         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); const y = e.clientY - e.currentTarget.getBoundingClientRect().top; setContextMenu({ visible: true, x: e.pageX, y: e.pageY, seatId: seat.id, time: minutesToTime(Math.floor(((START_HOUR * 60) + (y / HOUR_HEIGHT * 60)) / 30) * 30) }); }}
-                    >
-                       {/* Drop Preview */}
-                       {dragTarget?.seatId === seat.id && (
-                          <div className="absolute left-0 right-0 z-[80] border-4 border-dashed bg-green-500/20 border-green-500 flex items-center justify-center" style={getGridPosition(dragTarget.startTime, dragTarget.endTime, START_HOUR, endHour)}>
-                             <span className="text-green-400 font-bold bg-black/50 px-2 rounded">{dragTarget.startTime} - {dragTarget.endTime}</span>
-                          </div>
-                       )}
+            <div className="flex items-center gap-3 relative">
+                <button onClick={handleLogout} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg transition-colors border border-red-500/20" title="Çıkış Yap"><LogOut size={20} /></button>
+                <button onClick={(e) => {e.stopPropagation(); setIsSettingsModalOpen(true)}} className="p-2 text-sim-yellow hover:bg-sim-yellow/10 rounded-lg transition-colors border border-sim-yellow/20" title="Ayarlar"><Settings size={20} /></button>
+                <button onClick={(e) => {e.stopPropagation(); setIsBlacklistOpen(true)}} className="p-2 text-sim-yellow hover:bg-sim-yellow/10 rounded-lg transition-colors border border-sim-yellow/20" title="Kara Liste"><AlertOctagon size={20} /></button>
+                <div className="flex bg-sim-black p-1 rounded-lg border border-sim-border overflow-hidden">
+                    {simulatorGroups.map(group => (
+                        <button key={group.id} onClick={(e) => {e.stopPropagation(); setView(group.id)}} className={`px-4 py-1.5 rounded-md font-bold text-[10px] uppercase transition-all whitespace-nowrap ${view === group.id ? 'bg-sim-yellow text-black' : 'text-gray-500 hover:text-gray-300'}`}>{group.name}</button>
+                    ))}
+                </div>
+                <button onClick={(e) => {e.stopPropagation(); setIsModalOpen(true)}} className="bg-sim-yellow text-black px-5 py-2 rounded-lg font-black text-[11px] uppercase shadow-lg shadow-yellow-500/10 hover:brightness-110 flex items-center gap-2"><Plus size={14}/> Yeni</button>
+            </div>
+          </header>
 
-                       {/* Reservations */}
-                       {reservations.filter(r => r.seatId === seat.id && r.date === dateStr).map(res => {
-                          const pos = getGridPosition(res.startTime, res.endTime, START_HOUR, endHour);
-                          const isSelected = selectedIds.includes(res.id);
-                          const isPast = timeToMinutes(res.endTime) < (now.getHours() * 60 + now.getMinutes()) && isSameDay(currentDate, now);
-                          const color = res.isPaid ? (isPast ? THEME.pastPaid : THEME.futurePaid) : (isPast ? THEME.pastUnpaid : THEME.futureUnpaid);
-                          
-                          return (
-                            <div key={res.id} 
-                                 draggable={!isCtrlPressed}
-                                 onDragStart={(e) => handleDragStart(e, res.id)}
-                                 onClick={(e) => { e.stopPropagation(); setSelectedIds([res.id]); }}
-                                 onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ visible: true, x: e.pageX, y: e.pageY, reservationId: res.id }); }}
-                                 className={`absolute left-0 right-0 mx-1 rounded-sm border shadow-lg flex flex-col items-center justify-center p-1 overflow-hidden transition-all z-[50] ${isSelected ? 'ring-2 ring-white z-[90]' : ''}`}
-                                 style={{ top: pos.top, height: pos.height, backgroundColor: color, borderColor: THEME.border, opacity: THEME.opacity }}>
-                              <span className="text-[9px] font-black leading-none opacity-80 mb-0.5">{res.startTime}-{res.endTime}</span>
-                              <span className="text-[11px] font-black truncate w-full text-center uppercase text-white">{res.name}</span>
+          <div className="flex-1 overflow-auto relative bg-sim-black">
+             <div className="flex relative" style={{ height: totalContentHeight }}>
+                 <div className="w-14 shrink-0 bg-sim-dark border-r border-sim-border sticky left-0 z-[65] flex flex-col">
+                    <div className="h-[40px] border-b border-sim-yellow flex items-center justify-center font-bold text-[8px] text-sim-yellow uppercase sticky top-0 bg-sim-dark z-10">TIME</div>
+                    <div className="flex-1">
+                        {Array.from({ length: totalHours }).map((_, i) => (
+                            <div key={i} className="border-b border-sim-border/10 flex items-center justify-center font-mono text-gray-600 text-[10px]" style={{ height: HOUR_HEIGHT }}>
+                                <span>{`${(START_HOUR + i) % 24}:00`.padStart(5, '0')}</span>
                             </div>
-                          );
-                       })}
+                        ))}
+                    </div>
+                 </div>
+
+                 <div className="flex-1 flex min-w-[800px] relative">
+                    {isSameDay(currentDate, now) && (
+                      <div className="absolute left-0 right-0 bg-sim-yellow/15 border-b-2 border-sim-yellow/60 pointer-events-none z-[50] transition-all duration-1000" style={{ top: 40, height: `${Math.max(0, (((now.getHours() * 60 + now.getMinutes()) - START_HOUR * 60) / (totalHours * 60)) * 100)}%`, maxHeight: `calc(100% - 40px)` }}>
+                         <div className="absolute bottom-0 right-2 bg-sim-yellow text-black text-[8px] font-black px-1.5 py-0.5 rounded shadow-[0_0_10px_rgba(251,191,36,0.5)]">ŞUAN</div>
+                      </div>
+                    )}
+
+                    {currentViewSeats.map((seat) => (
+                        <div key={seat.id} className="flex-1 border-r border-sim-border/20 relative flex flex-col">
+                            <div className="h-[40px] border-b border-sim-yellow bg-sim-black/80 sticky top-0 z-[60] flex items-center justify-center font-bold text-sim-yellow text-[10px] tracking-widest uppercase backdrop-blur-md">{seat.label}</div>
+                            <div className="relative flex-1 w-full" onDragOver={(e) => handleDragOver(e, seat.id)} onDrop={(e) => handleDrop(e, seat.id)}>
+                                <div className="absolute inset-0 z-10 cursor-default" onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); const y = e.clientY - e.currentTarget.getBoundingClientRect().top; const t = minutesToTime(Math.floor(((START_HOUR * 60) + (y / HOUR_HEIGHT * 60)) / 30) * 30); setContextMenu({ visible: true, x: e.pageX, y: e.pageY, seatId: seat.id, time: t }); }} />
+                                
+                                {/* Drag Target Ghosting - Improved Visibility */}
+                                {dragTarget && dragTarget.seatId === seat.id && (
+                                  <div 
+                                    className={`absolute left-0 right-0 z-[80] border-4 border-dashed transition-all duration-75 shadow-[0_0_30px_rgba(34,197,94,0.3)] ${dragTarget.isValid ? 'bg-green-500/30 border-green-400' : 'bg-red-500/30 border-red-400'}`}
+                                    style={getGridPosition(dragTarget.startTime, dragTarget.endTime, START_HOUR, endHour)}
+                                  >
+                                    <div className="flex h-full items-center justify-center text-xl font-black text-green-400 drop-shadow-[0_0_10px_rgba(34,197,94,1)] tracking-tighter">
+                                        {dragTarget.startTime} - {dragTarget.endTime}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {reservations.filter(r => r.seatId === seat.id && r.date === dateStr).map(res => {
+                                    const pos = getGridPosition(res.startTime, res.endTime, START_HOUR, endHour);
+                                    const selected = selectedIds.includes(res.id);
+                                    const currentTimeMins = now.getHours() * 60 + now.getMinutes();
+                                    const resStartMins = timeToMinutes(res.startTime);
+                                    const resEndMins = timeToMinutes(res.endTime);
+                                    
+                                    const isCurrentDate = isSameDay(currentDate, now);
+                                    const isPast = (resEndMins < currentTimeMins && isCurrentDate) || (currentDate < now && !isCurrentDate);
+                                    const isActive = isCurrentDate && currentTimeMins >= resStartMins && currentTimeMins <= resEndMins;
+                                    const isFuture = !isPast && !isActive;
+
+                                    let bgColor = isFuture ? 'bg-sim-gray border-sim-border text-gray-400' : (res.isPaid ? 'bg-emerald-600 border-emerald-500' : 'bg-red-600 border-red-500');
+                                    if(isPast) bgColor = 'bg-sim-yellow/20 border-sim-yellow/40 text-sim-yellow/60';
+
+                                    return (
+                                        <div 
+                                          key={res.id} 
+                                          draggable={!isCtrlPressed} 
+                                          onDragStart={(e) => handleDragStart(e, res.id)} 
+                                          onDragEnd={handleDragEnd}
+                                          onClick={(e) => handleSelection(e, res.id)} 
+                                          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ visible: true, x: e.pageX, y: e.pageY, reservationId: res.id }); }}
+                                          className={`absolute left-0 right-0 rounded-sm overflow-hidden flex flex-col justify-center text-center p-1 transition-all border z-[50] ${selected ? 'ring-4 ring-white z-[90] shadow-[0_0_30px_rgba(255,255,255,0.4)] brightness-110' : ''} ${bgColor} ${isActive && !res.isPaid ? 'animate-pulse' : ''} cursor-grab active:cursor-grabbing active:z-[100]`}
+                                          style={{ top: pos.top, height: pos.height }}
+                                        >
+                                            {res.isPaid && <div className="absolute top-1 right-1 bg-white/20 rounded-full p-0.5"><Check size={8} className="text-white" /></div>}
+                                            <div className="text-[10px] font-bold opacity-90 leading-none mb-0.5">{res.startTime}-{res.endTime}</div>
+                                            <div className="font-black text-[12px] truncate uppercase px-1 tracking-tight">{res.name}</div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    ))}
+                 </div>
+             </div>
+          </div>
+        </div>
+
+        <aside className="w-[320px] bg-sim-dark/50 backdrop-blur-xl flex flex-col shrink-0 border-l border-sim-border z-[70]" onClick={(e) => e.stopPropagation()}>
+          <div className="p-5 border-b border-sim-border bg-sim-black/20 flex items-center justify-between">
+            <div className="flex items-center gap-3 text-sim-yellow font-black text-xs tracking-widest uppercase"><Edit3 size={16}/> Düzenle</div>
+            {selectedIds.length > 0 && <span className="bg-sim-yellow text-black text-[9px] font-black px-2 py-0.5 rounded-full shadow-[0_0_10px_rgba(251,191,36,0.4)]">{selectedIds.length} SEÇİLİ</span>}
+          </div>
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            {selectedIds.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center opacity-10 text-center space-y-4"><MousePointer2 size={64} strokeWidth={1} /><p className="text-[10px] font-bold uppercase tracking-widest px-8">İşlem yapmak için takvimden bir kayıt seçin</p></div>
+            ) : (
+              <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+                  <button onClick={handleSelectGroup} className="w-full bg-sim-yellow/10 border border-sim-yellow text-sim-yellow font-black py-3 rounded-xl text-[10px] uppercase flex items-center justify-center gap-2 hover:bg-sim-yellow hover:text-black transition-all"><MousePointerSquareDashed size={14} /> Tüm Grubu Seç</button>
+                  <div className="space-y-4">
+                    <div className="space-y-1.5"><label className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Müşteri</label><input type="text" value={editForm.name} onChange={(e) => setEditForm({...editForm, name: e.target.value.toUpperCase()})} className="w-full bg-sim-black border border-sim-border rounded-lg p-3 text-xs text-white uppercase outline-none focus:border-sim-yellow transition-all" placeholder="AD SOYAD" /></div>
+                    <div className="space-y-1.5"><label className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Telefon</label><input type="text" value={editForm.phone} onChange={(e) => setEditForm({...editForm, phone: formatPhoneNumber(e.target.value)})} className="w-full bg-sim-black border border-sim-border rounded-lg p-3 text-xs text-white outline-none focus:border-sim-yellow transition-all" placeholder="5XX XXX XX XX" /></div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1.5"><label className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Başlangıç</label><input type="time" value={editForm.startTime} onChange={(e) => setEditForm({...editForm, startTime: e.target.value})} className="w-full bg-sim-black border border-sim-border rounded-lg p-3 text-xs text-white outline-none" /></div>
+                        <div className="space-y-1.5"><label className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Bitiş</label><input type="time" value={editForm.endTime} onChange={(e) => setEditForm({...editForm, endTime: e.target.value})} className="w-full bg-sim-black border border-sim-border rounded-lg p-3 text-xs text-white outline-none" /></div>
+                    </div>
+                    <div className="space-y-2">
+                        <div className="flex items-center justify-between mb-1.5"><label className={`text-[9px] font-black uppercase tracking-widest flex items-center gap-1 ${isGroupMode ? 'text-green-500' : 'text-gray-500'}`}>{isGroupMode ? <CheckCircle2 size={10}/> : <Repeat size={10}/>} {isGroupMode ? "GRUP MODU: AKTİF" : "MASA DEĞİŞTİRME"}</label><button onClick={() => setIsGroupMode(!isGroupMode)} className={`text-[8px] font-bold px-2 py-1 rounded border transition-all ${isGroupMode ? 'bg-green-600 text-white border-green-500 shadow-lg shadow-green-500/20' : 'bg-sim-dark text-gray-400 border-sim-border hover:text-white'}`}>{isGroupMode ? "MOD: GRUP" : "MOD: TEK"}</button></div>
+                        <div className={`grid grid-cols-4 gap-2 p-3 rounded-xl border-2 transition-all duration-300 ${isGroupMode ? 'bg-green-950/20 border-green-500' : 'bg-sim-black border-sim-border'}`}>
+                            {currentViewSeats.map(s => {
+                                const isSel = selectedIds.some(id => reservations.find(r => r.id === id)?.seatId === s.id);
+                                return <button key={s.id} onClick={() => isGroupMode ? handleGroupSeatToggle(s.id) : setEditForm({...editForm, seatId: s.id})} className={`p-2 text-[8px] font-black rounded border transition-all ${isSel ? 'bg-sim-yellow text-black border-sim-yellow shadow-lg shadow-yellow-500/20' : 'bg-sim-gray text-gray-400 border-sim-border hover:border-gray-500'}`}>{s.label}</button>
+                            })}
+                        </div>
+                    </div>
+                    <div className="space-y-1.5">
+                        <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Ödeme Durumu</label>
+                        <div className="flex bg-sim-black p-1 rounded-xl border border-sim-border">
+                            <button onClick={() => setEditForm({...editForm, isPaid: true})} className={`flex-1 py-3 text-[10px] font-black rounded-lg transition-all ${editForm.isPaid ? 'bg-green-600 text-white shadow-lg shadow-green-500/20' : 'text-gray-600'}`}>ALINDI</button>
+                            <button onClick={() => setEditForm({...editForm, isPaid: false})} className={`flex-1 py-3 text-[10px] font-black rounded-lg transition-all ${!editForm.isPaid ? 'bg-red-900 text-white shadow-lg shadow-red-900/20' : 'text-gray-600'}`}>ALINMADI</button>
+                        </div>
                     </div>
                   </div>
-                ))}
+                  <div className="flex flex-col gap-3 pt-6 border-t border-sim-border">
+                    <button onClick={handleSaveEdit} className="w-full bg-sim-yellow text-black font-black py-4 rounded-xl text-[11px] uppercase flex items-center justify-center gap-2 shadow-lg shadow-yellow-500/20 hover:scale-[1.02] active:scale-95 transition-all"><Save size={16} /> Güncelle</button>
+                    <button onClick={async () => { if(confirm('Sil?')) { await Promise.all(selectedIds.map(id => supabase.from('reservations').delete().eq('id', id))); setSelectedIds([]); } }} className="w-full bg-transparent border border-red-900/50 text-red-700 font-black py-3 rounded-xl text-[10px] uppercase hover:bg-red-950/20 transition-all">Sil</button>
+                  </div>
               </div>
-           </div>
-        </div>
-      </div>
+            )}
+          </div>
+        </aside>
 
-      <ReservationModal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
-        onSubmit={finalizeReservation} 
-        onAddToBlacklist={handleAddToBlacklist}
-        availableSeats={allSeats} 
-        view={view} 
-        simulatorGroups={simulatorGroups}
-        initialData={infoData}
-      />
-      <SettingsModal 
-         isOpen={isSettingsModalOpen} 
-         onClose={() => setIsSettingsModalOpen(false)} 
-         groups={simulatorGroups} onUpdateGroups={setSimulatorGroups} 
-         endHour={endHour} onUpdateEndHour={setEndHour} 
-         seatLabelPrefix={seatLabelPrefix} onUpdatePrefix={setSeatLabelPrefix} 
-         onCleanDay={handleCleanDay} onCleanMonth={handleCleanMonth} 
-      />
-      <BlacklistModal isOpen={isBlacklistOpen} onClose={() => setIsBlacklistOpen(false)} blacklist={blacklist} onUpdate={fetchData} />
-      
-      {contextMenu.visible && <ContextMenu {...contextMenu} onClose={() => setContextMenu({...contextMenu, visible: false})} onAction={async (action) => {
-           if (action === 'CREATE_NEW') { setInfoData({startTime: contextMenu.time}); setIsModalOpen(true); }
-           if (action === 'SHOW_INFO') { 
-              const r = reservations.find(res => res.id === contextMenu.reservationId); 
-              if(r) { setInfoData({...r, selectedSeats: [r.seatId]}); setIsModalOpen(true); }
-           }
-           setContextMenu({...contextMenu, visible: false});
-      }} type={contextMenu.reservationId ? 'RESERVATION' : 'EMPTY'} />}
+        <ReservationModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={finalizeReservation} availableSeats={seatsList} view={view} simulatorGroups={simulatorGroups} />
+        <BlacklistModal isOpen={isBlacklistOpen} onClose={() => setIsBlacklistOpen(false)} blacklist={blacklist} onUpdate={fetchData} />
+        <SettingsModal 
+            isOpen={isSettingsModalOpen} 
+            onClose={() => setIsSettingsModalOpen(false)} 
+            groups={simulatorGroups} 
+            onUpdateGroups={setSimulatorGroups} 
+            endHour={endHour} 
+            onUpdateEndHour={setEndHour} 
+            seatLabelPrefix={seatLabelPrefix} 
+            onUpdatePrefix={setSeatLabelPrefix}
+            onCleanDay={handleCleanDay}
+            onCleanMonth={handleCleanMonth}
+        />
+        <InfoModal data={infoData} onClose={() => { setIsInfoOpen(false); setInfoData(null); }} />
+        {contextMenu.visible && <ContextMenu {...contextMenu} onClose={() => setContextMenu({...contextMenu, visible: false})} onAction={async (action) => {
+             if (action === 'CREATE_NEW') setIsModalOpen(true);
+             if (action === 'SHOW_INFO') { 
+                const r = reservations.find(res => res.id === contextMenu.reservationId); 
+                if(r) { 
+                    setInfoData({...r, seats: reservations.filter(res => res.groupId === r.groupId).map(res => res.seatId)}); 
+                    setIsInfoOpen(true); 
+                } 
+             }
+             setContextMenu({...contextMenu, visible: false});
+        }} type={contextMenu.reservationId ? 'RESERVATION' : 'EMPTY'} />}
+      </div>
     </div>
   );
+
+  function resetIdleTimer() {
+    setShowScreensaver(false);
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = setTimeout(() => setShowScreensaver(true), SCREENSAVER_TIMEOUT);
+  }
 }
 
 function LoginScreen() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) alert(error.message);
-    setLoading(false);
-  };
-  
-  return (
-    <div className="fixed inset-0 flex items-center justify-center bg-sim-black">
-      <div className="bg-sim-dark p-10 rounded-2xl border border-sim-yellow/20 shadow-2xl w-full max-w-md">
-        <div className="flex justify-center mb-6"><Loader2 size={40} className="text-sim-yellow animate-spin" /></div>
-        <h1 className="text-sim-yellow font-black text-2xl uppercase tracking-tighter mb-8 text-center">Sim Manager</h1>
-        <form onSubmit={handleLogin} className="space-y-4">
-          <input type="email" placeholder="E-Posta" value={email} onChange={e => setEmail(e.target.value)} className="w-full bg-sim-black border border-sim-border p-4 rounded-xl outline-none focus:border-sim-yellow text-white" required />
-          <input type="password" placeholder="Şifre" value={password} onChange={e => setPassword(e.target.value)} className="w-full bg-sim-black border border-sim-border p-4 rounded-xl outline-none focus:border-sim-yellow text-white" required />
-          <button type="submit" disabled={loading} className="w-full bg-sim-yellow text-black font-black py-4 rounded-xl uppercase hover:bg-sim-yellowHover transition-all">{loading ? 'Giriş Yapılıyor...' : 'Giriş Yap'}</button>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-export default function App() {
-  return (
-    <ErrorBoundary>
-      <AppContent />
-    </ErrorBoundary>
-  );
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState('');
+    const handleLogin = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setLoading(true);
+        setError('');
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) setError('Giriş başarısız.');
+        setLoading(false);
+    };
+    return (
+        <div className="fixed inset-0 bg-sim-black flex items-center justify-center p-4">
+            <div className="w-full max-w-[400px] bg-sim-dark border border-sim-yellow/30 p-10 rounded-2xl shadow-2xl relative overflow-hidden transition-all">
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-sim-yellow to-transparent"></div>
+                <div className="flex flex-col items-center mb-8 group/logo cursor-pointer relative">
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32 bg-sim-yellow/0 rounded-full blur-2xl group-hover/logo:bg-sim-yellow/30 transition-all duration-500 scale-75 group-hover/logo:scale-125"></div>
+                    <img src="/logo.png" alt="Logo" className="h-24 mb-4 object-contain relative z-10 transition-transform duration-500 group-hover/logo:scale-110" />
+                    <h2 className="text-sim-yellow font-black text-xs tracking-[0.3em] uppercase opacity-80 relative z-10">SimRacing Manager</h2>
+                </div>
+                <form onSubmit={handleLogin} className="space-y-6 relative z-10">
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2"><Mail size={12}/> E-Posta</label>
+                        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="w-full bg-sim-black border border-sim-border rounded-xl p-4 text-sm text-white outline-none focus:border-sim-yellow transition-all" />
+                    </div>
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2"><Lock size={12}/> Şifre</label>
+                        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required className="w-full bg-sim-black border border-sim-border rounded-xl p-4 text-sm text-white outline-none focus:border-sim-yellow transition-all" />
+                    </div>
+                    {error && <div className="text-red-500 text-[10px] font-bold text-center uppercase tracking-wider bg-red-500/10 p-2 rounded-lg border border-red-500/20">{error}</div>}
+                    <button type="submit" disabled={loading} className="w-full bg-sim-yellow text-black font-black py-4 rounded-xl text-xs uppercase hover:brightness-110 transition-all flex items-center justify-center gap-2 shadow-lg shadow-yellow-500/20">
+                        {loading ? <Loader2 className="animate-spin" size={18}/> : 'Giriş Yap'}
+                    </button>
+                </form>
+                <div className="mt-8 text-center relative z-10"><p className="text-[8px] text-gray-600 font-bold uppercase tracking-widest">© 2024 SIMRACING MANAGEMENT SYSTEM</p></div>
+            </div>
+        </div>
+    );
 }
